@@ -1,0 +1,110 @@
+{
+  "name": "tripplannera2a",
+  "version": 1,
+  "managedBy": "CDK",
+  "runtimes": [
+    {
+      "name": "FlightsAgent",
+      "description": "Agente servidor A2A especializado en búsqueda de vuelos entre ciudades",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/FlightsAgent/",
+      "runtimeVersion": "PYTHON_3_12",
+      "networkMode": "PUBLIC",
+      "protocol": "A2A",
+      "envVars": [
+        {
+          "name": "TRAVEL_MCP_URL",
+          "value": "https://ignav.com/mcp"
+        },
+        {
+          "name": "IGNAV_SECRET_ARN",
+          "value": "arn:aws:secretsmanager:us-east-2:750708765285:secret:bedrock-agentcore-identity!default/apikey/IgnavApiKey-df72bec2"
+        }
+      ]
+    },
+    {
+      "name": "WeatherAgent",
+      "description": "Agente servidor A2A especializado en pronósticos del clima",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/WeatherAgent/",
+      "runtimeVersion": "PYTHON_3_12",
+      "networkMode": "PUBLIC",
+      "protocol": "A2A"
+    },
+    {
+      "name": "OrchestratorAgent",
+      "description": "Agente orquestador que coordina los especialistas vía A2A",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/OrchestratorAgent/",
+      "runtimeVersion": "PYTHON_3_12",
+      "envVars": [
+        {
+          "name": "FLIGHTS_AGENT_URL",
+          "value": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A750708765285%3Aruntime%2Ftripplannera2a_FlightsAgent-MZwYNpFz5J"
+        },
+        {
+          "name": "WEATHER_AGENT_URL",
+          "value": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A750708765285%3Aruntime%2Ftripplannera2a_WeatherAgent-0uRzDWA45L"
+        },
+        {
+          "name": "TRIP_MEMORY_ID",
+          "value": "arn:aws:bedrock-agentcore:us-east-2:750708765285:memory/tripplannera2a_TripPlannerMemory-uGQUuJ7yBl"
+        }
+      ],
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "additionalPolicies": [
+        "invoke-specialists-policy.json"
+      ]
+    }
+  ],
+  "memories": [
+    {
+      "name": "TripPlannerMemory",
+      "eventExpiryDuration": 90,
+      "strategies": [
+        {
+          "type": "USER_PREFERENCE",
+          "name": "TravelerPreferences",
+          "description": "Preferencias de viaje del usuario (horarios, aerolíneas, asientos).",
+          "namespaceTemplates": [
+            "/preferences/{actorId}/"
+          ]
+        },
+        {
+          "type": "SUMMARIZATION",
+          "name": "SessionSummarizer",
+          "description": "Resumen por sesión de planificación de viaje.",
+          "namespaceTemplates": [
+            "/summaries/{actorId}/{sessionId}/"
+          ]
+        },
+        {
+          "type": "SEMANTIC",
+          "name": "TravelFacts",
+          "description": "Hechos relevantes del viaje recuperables por significado.",
+          "namespaceTemplates": [
+            "/facts/{actorId}/"
+          ]
+        }
+      ]
+    }
+  ],
+  "knowledgeBases": [],
+  "credentials": [
+    {
+      "authorizerType": "ApiKeyCredentialProvider",
+      "name": "IgnavApiKey"
+    }
+  ],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "harnesses": []
+}

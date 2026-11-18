@@ -1,0 +1,9 @@
+[project]
+name = "weather-agent"
+version = "0.1.0"
+description = "A2A Weather Agent - consulta el pronóstico del clima"
+requires-python = ">=3.12"
+dependencies = [
+    "strands-agents[a2a]>=0.1.0",
+    "bedrock-agentcore>=0.1.0",
+]

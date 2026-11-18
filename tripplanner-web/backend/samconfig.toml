@@ -1,0 +1,19 @@
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "tripplanner-backend"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+stack_name = "tripplanner-backend"
+s3_bucket = ""
+s3_prefix = "tripplanner-backend"
+region = "us-east-2"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+disable_rollback = false
+resolve_s3 = true

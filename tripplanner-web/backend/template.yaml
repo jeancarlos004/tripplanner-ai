@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: TripPlanner AI - Backend serverless (Lambda + API Gateway + DynamoDB)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TripPlannerTable
+        REGION: us-east-2
+
+Resources:
+
+  # ── DynamoDB ────────────────────────────────────────────────────────────────
+  TripPlannerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: tripplanner-main
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ── IAM Role para Lambdas ────────────────────────────────────────────────────
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: tripplanner-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt TripPlannerTable.Arn
+                  - !Sub "${TripPlannerTable.Arn}/index/*"
+
+  # ── API Gateway ─────────────────────────────────────────────────────────────
+  TripPlannerApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: tripplanner-api
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+  # ── Lambdas ──────────────────────────────────────────────────────────────────
+
+  CreateTripFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-create-trip
+      CodeUri: lambdas/trips/
+      Handler: create_trip.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips
+            Method: POST
+
+  GetTripsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-get-trips
+      CodeUri: lambdas/trips/
+      Handler: get_trips.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips
+            Method: GET
+
+  UpdateTripFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-update-trip
+      CodeUri: lambdas/trips/
+      Handler: update_trip.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}
+            Method: PUT
+
+  CreateItineraryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-create-itinerary
+      CodeUri: lambdas/itineraries/
+      Handler: create_itinerary.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}/itinerary
+            Method: POST
+
+  UpdateItineraryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-update-itinerary
+      CodeUri: lambdas/itineraries/
+      Handler: update_itinerary.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}/itinerary/{date}
+            Method: PUT
+
+  CreateReservationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-create-reservation
+      CodeUri: lambdas/reservations/
+      Handler: create_reservation.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}/reservations
+            Method: POST
+
+  GetReservationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-get-reservations
+      CodeUri: lambdas/reservations/
+      Handler: get_reservations.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}/reservations
+            Method: GET
+
+  UpdateReservationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-update-reservation
+      CodeUri: lambdas/reservations/
+      Handler: update_reservation.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TripPlannerApi
+            Path: /trips/{tripId}/reservations/{reservationId}
+            Method: PUT
+
+Outputs:
+  ApiUrl:
+    Description: URL base de la API
+    Value: !Sub "https://${TripPlannerApi}.execute-api.us-east-2.amazonaws.com/prod"
+  TableName:
+    Description: Nombre de la tabla DynamoDB
+    Value: !Ref TripPlannerTable

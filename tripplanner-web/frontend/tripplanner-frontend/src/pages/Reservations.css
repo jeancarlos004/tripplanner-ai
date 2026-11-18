@@ -1,0 +1,65 @@
+.reservations-page { max-width: 900px; animation: fadeIn .4s var(--ease); }
+
+.res-header-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 24px;
+}
+
+.trip-selector-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 18px 22px; margin-bottom: 20px;
+}
+.trip-selector-card label { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; display: block; }
+
+.res-create-form {
+  background: var(--bg-card); border: 1px solid var(--border-glow);
+  border-radius: 18px; padding: 28px; margin-bottom: 24px;
+  animation: scaleIn .3s var(--spring);
+  box-shadow: var(--shadow-glow);
+}
+.res-create-form h3 { font-size: 16px; font-weight: 700; color: var(--cyan); margin-bottom: 20px; }
+
+.res-status-info {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--text-3);
+  background: rgba(100,116,139,0.08); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
+}
+
+/* ── Reservation list ────────────────────────────────── */
+.reservations-list { display: flex; flex-direction: column; gap: 12px; }
+
+.reservation-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px 22px;
+  display: flex; align-items: flex-start; gap: 16px;
+  transition: all .25s var(--ease);
+  animation: slideRight .4s var(--ease) both;
+  position: relative; overflow: hidden;
+}
+
+/* Type color accent */
+.reservation-card.type-FLIGHT  { border-left: 3px solid var(--cyan); }
+.reservation-card.type-HOTEL   { border-left: 3px solid var(--violet); }
+.reservation-card.type-ACTIVITY{ border-left: 3px solid var(--emerald); }
+
+.reservation-card:hover { box-shadow: var(--shadow-md); transform: translateX(2px); }
+
+.res-type-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0;
+}
+.type-FLIGHT   .res-type-icon { background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.2); }
+.type-HOTEL    .res-type-icon { background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.2); }
+.type-ACTIVITY .res-type-icon { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2); }
+
+.res-body { flex: 1; min-width: 0; }
+.res-top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.res-type-label { font-size: 13px; font-weight: 700; color: var(--text); }
+.res-details { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-bottom: 8px; }
+.res-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-3); }
+.res-price { font-weight: 700; color: var(--emerald); }
+
+.res-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+.res-actions .btn { font-size: 12px; padding: 7px 14px; white-space: nowrap; }
