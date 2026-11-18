@@ -209,7 +209,6 @@ Resources:
         OptTripResOne:   { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations/{reservationId}", Method: OPTIONS, Auth: { Authorizer: NONE } } }
         OptReservations: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /reservations, Method: OPTIONS, Auth: { Authorizer: NONE } } }
         OptProfile:      { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /profile, Method: OPTIONS, Auth: { Authorizer: NONE } } }
-            Auth: { Authorizer: NONE }
 
   # ════════════════════════════════════════════════════════════════════════
   # Lambdas de negocio — cada una con permisos mínimos sobre la tabla
