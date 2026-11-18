@@ -6,7 +6,8 @@
 **Contenido:** [1. Arquitectura](#1-arquitectura) · [2. Modelo de datos](#2-modelo-de-datos) ·
 [3. APIs](#3-apis) · [4. Lambdas](#4-lambdas) · [5. Tools](#5-tools) ·
 [6. Integración de agentes](#6-integración-de-agentes) · [7. Seguridad](#7-seguridad) ·
-[8. Ejecución desde cero](#8-instrucciones-de-ejecución) · [9. Demo](#9-escenario-de-demostración)
+[8. Ejecución desde cero](#8-instrucciones-de-ejecución) · [9. Demo](#9-escenario-de-demostración) ·
+[10. Opcionales](#10-funcionalidades-opcionales-implementadas)
 
 ---
 
@@ -211,6 +212,9 @@ llama a su Lambda vía API Gateway con el token del usuario y emite un evento `u
 | `save_preferences` | `preferences{}` | `tripplanner-get-profile` + `tripplanner-update-profile` | `preferences` |
 | `ask_flights` | `request` | — (A2A → Flight Agent → MCP Ignav) | `flights` |
 | `ask_weather` | `request` | — (A2A → Weather Agent → MCP clima) | `weather` |
+| `get_traveler_profile` | — | `tripplanner-get-profile` + `tripplanner-get-trips` | — (contexto para personalizar) |
+| `show_recommendations` | `kind, title, items[], destination` | — (datos generados por el agente) | `recommendations` |
+| `show_food_recommendations` | `destination, items[], title` | — (datos generados por el agente) | `recommendations` (`kind = gastronomy`) |
 
 Herramientas MCP de los especialistas:
 
@@ -248,6 +252,7 @@ Herramientas MCP de los especialistas:
 | `itinerary` | `ItineraryAgenda`: agenda por día con horarios |
 | `reservations` | `ReservationList`: listado con estado Simulada / Pendiente / Confirmada |
 | `preferences` | `PreferencesCard` |
+| `recommendations` | `RecommendationCards`: destinos, actividades o comida, con la línea **“Para ti”** que explica por qué encaja con el perfil |
 
 ### 6.2 Orchestrator → especialistas (A2A) → MCP
 
@@ -347,3 +352,19 @@ encontrar vuelos y organizar algunas actividades turísticas”.*
 | 10 | Datos en DynamoDB | Consola DynamoDB → `tripplanner-main` |
 | 11 | Cerrar sesión | Botón “Cerrar sesión” |
 | 12 | Volver a entrar | Dashboard (próximos viajes, reservas), Mis viajes → detalle, o chat *“Muéstrame mis viajes”* |
+
+---
+
+## 10. Funcionalidades opcionales implementadas
+
+| Funcionalidad | Cómo funciona | Dónde verlo |
+|---|---|---|
+| 📄 **Exportación PDF** | Se genera en el navegador con jsPDF (carga diferida, ~130 KB gzip solo al exportar). Incluye resumen del viaje, presupuesto (reservado / estimado / disponible), itinerario día por día y reservas con su estado. No se envía a ningún servicio externo. | **Mis viajes → detalle → “📄 Descargar PDF”** |
+| ⭐ **Recomendaciones personalizadas** | `get_traveler_profile` lee las preferencias y el historial de viajes (DynamoDB vía Lambda); el agente elige 3-6 opciones y las envía con `show_recommendations`. Cada tarjeta incluye **“Para ti”**, que cita la preferencia o el historial que justifica la recomendación. Complementa la memoria de AgentCore. | Chat: *“Recomiéndame destinos para mi próximo viaje según mis preferencias”* |
+| 🍽️ **Recomendaciones gastronómicas** | `show_food_recommendations`: platos típicos + tipo de lugar o zona, nivel de precio ($-$$$$), momento del día y etiquetas dietéticas. **Respeta las restricciones alimentarias** del perfil (p. ej. vegetariano) y ajusta el precio al presupuesto. | Chat: *“¿Qué comida típica me recomiendas en Cartagena?”* o **Mis viajes → detalle → “🍽️ Dónde comer”** |
+
+**Prueba sugerida en la sustentación:**
+1. *“Me encantan la playa y la naturaleza, presupuesto moderado, ritmo relajado, salgo desde Bogotá. Guarda estas preferencias.”* → tarjeta ⭐ Preferencias guardadas.
+2. *“Recomiéndame destinos para mi próximo viaje según mis preferencias”* → tarjetas de destinos con “Para ti”.
+3. *“Soy vegetariano, guárdalo”* y luego **“🍽️ Dónde comer”** en el viaje a Cartagena → solo opciones vegetarianas.
+4. En el viaje, **“📄 Descargar PDF”** → documento con itinerario, presupuesto y reservas.

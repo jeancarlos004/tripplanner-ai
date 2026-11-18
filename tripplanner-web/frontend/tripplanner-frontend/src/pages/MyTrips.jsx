@@ -241,6 +241,10 @@ function TripDetail({ tripId }) {
             <button key={k} className="btn btn-secondary" disabled={busy} onClick={() => setStatus(k)} type="button">→ {v.label}</button>
           ))}
           <Link className="btn btn-ghost" to={`/reservations?trip=${trip.tripId}`}>📋 Nueva reserva</Link>
+          <Link className="btn btn-ghost"
+            to={`/chat?q=${encodeURIComponent(`Recomiéndame qué y dónde comer en ${trip.destination} para mi viaje del ${trip.startDate} al ${trip.endDate}, según mis preferencias y presupuesto`)}`}>
+            🍽️ Dónde comer
+          </Link>
           <button className="btn btn-primary" onClick={exportPdf} disabled={pdfBusy} type="button">
             {pdfBusy ? 'Generando…' : '📄 Descargar PDF'}
           </button>

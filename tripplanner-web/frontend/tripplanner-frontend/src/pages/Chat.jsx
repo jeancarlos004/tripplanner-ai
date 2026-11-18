@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { streamAgent, getChatSessionId } from '../lib/agent.js'
 import { renderMarkdown } from '../lib/format.js'
 import { AgentUI } from '../components/AgentCards.jsx'
@@ -8,6 +9,7 @@ import './Chat.css'
 const SUGGESTED = [
   'Quiero organizar unas vacaciones de cuatro días en Cartagena. Salgo desde Bogotá, viajo con dos personas más y tengo un presupuesto de 5 millones de pesos. Quiero conocer el clima, encontrar vuelos y organizar algunas actividades turísticas.',
   'Recomiéndame destinos para mi próximo viaje según mis preferencias',
+  '¿Qué comida típica me recomiendas probar en Cartagena y dónde?',
   'Muéstrame mis viajes guardados',
   '¿Qué reservas tengo registradas?',
 ]
@@ -42,6 +44,18 @@ export default function Chat() {
     try { sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ sessionId, messages })) } catch { /* noop */ }
   }, [messages, loading, sessionId])
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Envío automático de una consulta que llega por URL (?q=...), p. ej. desde "Dónde comer"
+  const [params, setParams] = useSearchParams()
+  const autoSent = useRef(false)
+  useEffect(() => {
+    const q = params.get('q')
+    if (q && !autoSent.current) {
+      autoSent.current = true
+      setParams({}, { replace: true })
+      sendMessage(q.slice(0, 500))
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const patchLast = fn => setMessages(prev => {
     const copy = [...prev]

@@ -91,6 +91,7 @@ STATUS_BY_TOOL = {
     "save_preferences": "💾 Guardando tus preferencias…",
     "get_traveler_profile": "⭐ Revisando tus preferencias e historial de viajes…",
     "show_recommendations": "✨ Preparando recomendaciones para ti…",
+    "show_food_recommendations": "🍽️ Preparando recomendaciones gastronómicas…",
 }
 
 
@@ -506,6 +507,28 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
         """
         return _show_recommendations(kind, title, items, destination)
 
+    @tool
+    def show_food_recommendations(destination: str, items: list[dict], title: str = "") -> str:
+        """
+        Muestra recomendaciones GASTRONÓMICAS como tarjetas (qué y dónde comer en un destino).
+
+        Args:
+            destination: Ciudad o zona (ej. "Cartagena").
+            title: Título opcional (ej. "Qué comer en Cartagena").
+            items: 3 a 6 recomendaciones. Cada una:
+                   {"name": "tipo de lugar o zona (ej. 'Cocina caribeña en Getsemaní')",
+                    "dish": "plato típico recomendado (ej. 'Posta negra cartagenera')",
+                    "description": "1-2 frases",
+                    "reason": "por qué encaja con ESTE usuario (dieta, presupuesto, gustos)",
+                    "priceLevel": 1-4 (1=económico, 4=alto),
+                    "estimatedCost": 45000, "currency": "COP" (por persona),
+                    "mealTime": "desayuno|almuerzo|cena|merienda|noche",
+                    "location": "barrio o zona",
+                    "dietary": ["vegetariano", "sin gluten", ...] (solo si realmente aplica),
+                    "category": "gastronomía", "tags": ["típico", "mariscos", ...]}
+        """
+        return _show_recommendations("gastronomy", title or f"Qué comer en {destination}", items, destination)
+
     def _show_recommendations(kind, title, items, destination=""):
         clean = []
         for it in (items or [])[:8]:
@@ -526,14 +549,18 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
             return json.dumps({"ok": False, "error": "items vacío o inválido"})
         emit("recommendations", {"kind": str(kind)[:20], "title": str(title)[:120],
                                  "destination": str(destination)[:80], "items": clean})
-        return json.dumps({"ok": True, "shown": len(clean)}, ensure_ascii=False)
+        return json.dumps({
+            "ok": True, "shown": len(clean),
+            "instruction": ("Las recomendaciones YA se muestran al usuario como tarjetas. NO las enumeres "
+                            "ni repitas nombres, platos o precios. Responde solo 1-2 frases y una pregunta."),
+        }, ensure_ascii=False)
 
     return [
         ask_flights, ask_weather,
         create_trip, get_trips, get_trip_details, update_trip,
         create_itinerary, update_itinerary,
         create_reservation, get_reservations, update_reservation,
-        save_preferences, get_traveler_profile, show_recommendations,
+        save_preferences, get_traveler_profile, show_recommendations, show_food_recommendations,
     ]
 
 
@@ -553,6 +580,7 @@ HERRAMIENTAS
 - save_preferences → guarda preferencias que el usuario exprese (presupuesto, actividades, aerolíneas…).
 - get_traveler_profile → preferencias + historial de viajes del usuario (para personalizar).
 - show_recommendations → muestra recomendaciones como tarjetas.
+- show_food_recommendations → muestra recomendaciones gastronómicas (qué y dónde comer) como tarjetas.
 
 FLUJO
 1. Si el usuario quiere planear un viaje: identifica origen, destino, fechas, viajeros y presupuesto.
@@ -582,6 +610,16 @@ FLUJO
       buscar vuelos/clima o crear el viaje para la opción que elija.
    Si no hay preferencias guardadas, recomienda opciones variadas y pregunta 1-2 preferencias clave.
    Los costos son ESTIMADOS: indícalo.
+7. RECOMENDACIONES GASTRONÓMICAS ("¿qué como en X?", "¿dónde comer?", "restaurantes", "comida típica"):
+   a) Llama a get_traveler_profile para conocer dietaryRestrictions, budgetLevel y gustos.
+   b) Prepara 3-6 opciones: platos típicos del destino + tipo de lugar o zona donde probarlos
+      (mercados, barrios gastronómicos, cocina local). Prefiere zonas y tipos de lugar; nombra un
+      restaurante concreto solo si es muy conocido y establecido.
+   c) RESPETA las restricciones alimentarias: si es vegetariano/vegano/sin gluten, NO recomiendes platos
+      que las incumplan; propone la versión adecuada y márcala en "dietary".
+   d) Ajusta priceLevel y estimatedCost (por persona) a su presupuesto; varía los momentos del día.
+   e) Llama a show_food_recommendations (sin escribir texto antes). Después, 1-2 líneas y UNA pregunta
+      (p. ej. si quiere añadir alguna comida al itinerario con update_itinerary).
 
 REGLAS
 - La interfaz muestra los resultados de las herramientas como tarjetas visuales (vuelos, clima, viaje,

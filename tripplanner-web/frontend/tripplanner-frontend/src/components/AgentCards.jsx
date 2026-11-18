@@ -254,7 +254,9 @@ export function RecommendationCards({ data }) {
             <div className="ac-rec-meta">
               {it.category && <span className="tag">{it.category}</span>}
               {(it.dietary || []).map(t => <span key={t} className="tag tag-green">✓ {t}</span>)}
-              {(it.tags || []).map(t => <span key={t} className="tag">{t}</span>)}
+              {(it.tags || [])
+                .filter(t => t !== it.category && !(it.dietary || []).some(d => d.toLowerCase() === String(t).toLowerCase()))
+                .map(t => <span key={t} className="tag">{t}</span>)}
             </div>
             <div className="ac-rec-foot">
               {it.location && <span>📍 {it.location}</span>}
