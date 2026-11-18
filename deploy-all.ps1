@@ -14,7 +14,9 @@ param(
     [string]$StackName = 'tripplanner-backend'
 )
 
-$ErrorActionPreference = 'Stop'
+# 'Continue': los CLIs (sam, npm, agentcore) escriben progreso en stderr; los errores
+# se detectan por código de salida con Check.
+$ErrorActionPreference = 'Continue'
 $Root     = $PSScriptRoot
 $Backend  = Join-Path $Root 'tripplanner-web\backend'
 $Frontend = Join-Path $Root 'tripplanner-web\frontend\tripplanner-frontend'
