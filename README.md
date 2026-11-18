@@ -49,7 +49,7 @@ Sistema multi-agente que implementa el protocolo **Agent-to-Agent (A2A)** para p
 
 Un usuario quiere planificar un viaje y hace una petición en lenguaje natural:
 
-> "Quiero viajar de Bogotá a Cartagena el próximo fin de semana. ¿Qué vuelos hay y cómo estará el clima?"
+> "Quiero viajar de BOG a CTG el próximo fin de semana. ¿Qué vuelos hay y cómo estará el clima?"
 
 Esta petición requiere **dos competencias distintas**:
 - ✈️ Buscar vuelos disponibles
