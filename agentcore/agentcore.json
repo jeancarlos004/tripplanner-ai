@@ -52,6 +52,14 @@
         {
           "name": "TRIP_MEMORY_ID",
           "value": "arn:aws:bedrock-agentcore:us-east-2:750708765285:memory/tripplannera2a_TripPlannerMemory-uGQUuJ7yBl"
+        },
+        {
+          "name": "TRIPPLANNER_API_URL",
+          "value": "https://azkojnthof.execute-api.us-east-2.amazonaws.com/prod"
+        },
+        {
+          "name": "BEDROCK_MODEL_ID",
+          "value": "us.amazon.nova-pro-v1:0"
         }
       ],
       "networkMode": "PUBLIC",

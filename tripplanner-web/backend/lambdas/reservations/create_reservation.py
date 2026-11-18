@@ -1,74 +1,48 @@
-"""Lambda: CreateReservation — Registra una reserva asociada a un viaje."""
-import json
-import os
+"""
+Lambda: CreateReservation — registra una reserva (vuelo, hotel o actividad)
+asociada a un viaje.  POST /trips/{tripId}/reservations
+
+Las reservas se crean SIEMPRE con estado SIMULADA: no hay proveedor real.
+Nunca se aceptan datos de tarjeta (número, CVV, etc.).
+"""
 import uuid
 from datetime import datetime, timezone
-import boto3
 
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
-
-ALLOWED_TYPES = ["FLIGHT", "HOTEL", "ACTIVITY"]
+from common import (api_handler, table, pk, get_trip_or_404, require, one_of, text, money,
+                    iso_date, clean_json, no_payment_data, public, RESERVATION_TYPES)
 
 
-def handler(event, context):
-    try:
-        trip_id = event.get("pathParameters", {}).get("tripId")
-        user_id = event.get("requestContext", {}).get("authorizer", {}).get("userId", "default-user")
-        body = json.loads(event.get("body") or "{}")
+@api_handler
+def handler(user_id, body, path, **_):
+    trip_id = path.get("tripId")
+    trip = get_trip_or_404(user_id, trip_id)
+    require(body, "type", "details")
 
-        if not trip_id:
-            return _error(400, "tripId es requerido")
+    details = no_payment_data(clean_json(body["details"], "details"))
 
-        if "type" not in body or body["type"] not in ALLOWED_TYPES:
-            return _error(400, f"type es requerido. Valores: {ALLOWED_TYPES}")
-
-        if "details" not in body:
-            return _error(400, "details es requerido")
-
-        reservation_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-
-        item = {
-            "PK": f"TRIP#{trip_id}",
-            "SK": f"RESERVATION#{reservation_id}",
-            "reservationId": reservation_id,
-            "tripId": trip_id,
-            "userId": user_id,
-            "type": body["type"],
-            "status": "SIMULADA",   # Estado inicial siempre SIMULADA
-            "details": body["details"],
-            "price": str(body.get("price", "0")),
-            "createdAt": now,
-            "updatedAt": now,
-        }
-
-        table.put_item(Item=item)
-
-        return {
-            "statusCode": 201,
-            "headers": HEADERS,
-            "body": json.dumps({
-                "message": "Reserva registrada",
-                "reservationId": reservation_id,
-                "status": "SIMULADA",
-                "reservation": item
-            }, default=str)
-        }
-
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
+    reservation_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    item = {
+        "PK": pk(user_id),
+        "SK": f"RES#{trip_id}#{reservation_id}",
+        "entity": "RESERVATION",
+        "reservationId": reservation_id,
+        "tripId": trip_id,
+        "tripName": trip.get("name") or trip.get("destination"),
+        "type": one_of(body["type"], "type", RESERVATION_TYPES),
+        "title": text(body.get("title"), "title", 200, required=False),
+        "details": details,
+        "price": money(body.get("price"), "price", required=False),
+        "currency": (text(body.get("currency"), "currency", 3, required=False)
+                     or trip.get("currency", "COP")).upper(),
+        "status": "SIMULADA",
+        "provider": "SIMULATED",
+        "createdAt": now,
+        "updatedAt": now,
     }
+    if body.get("date"):
+        item["date"] = iso_date(body["date"], "date")
+
+    table.put_item(Item=item)
+    return 201, {"message": "Reserva registrada (simulada)", "reservationId": reservation_id,
+                 "status": "SIMULADA", "reservation": public(item)}

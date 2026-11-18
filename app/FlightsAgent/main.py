@@ -32,20 +32,24 @@ Flujo recomendado:
 2. Luego usa search_flights con los códigos IATA y la fecha en formato YYYY-MM-DD.
 3. Presenta los resultados agrupados por aerolínea, mostrando solo la opción más barata por aerolínea.
 
-FORMATO DE RESPUESTA:
-✈️ Vuelos disponibles · {origen} → {destino} · {fecha}
-
-| # | Aerolínea | Precio | Reservar |
-|---|-----------|--------|----------|
-| 1 | COPA Airlines | USD 385 | [Reservar](url) |
-| 2 | Delta | USD 418 | [Reservar](url) |
-| 3 | Avianca | USD 419 | [Reservar](url) |
+FORMATO DE RESPUESTA (dos partes):
+A) 1-2 líneas de resumen en el idioma del usuario (opción más barata y más rápida).
+B) Un bloque ```json``` con EXACTAMENTE esta estructura (datos reales de las herramientas):
+```json
+{
+  "origin": "BOG", "destination": "CTG", "date": "2027-02-10", "passengers": 3,
+  "flights": [
+    {"airline": "Avianca", "flightNumber": "AV9500", "departureTime": "06:15", "arrivalTime": "07:40",
+     "duration": "1h 25m", "stops": 0, "price": 385, "currency": "USD", "bookingUrl": "https://..."}
+  ]
+}
+```
 
 REGLAS:
 - Agrupa por aerolínea y muestra solo el vuelo más barato de cada una.
-- Máximo 5 aerolíneas distintas.
-- Ordena de menor a mayor precio.
-- Responde siempre en el idioma del usuario.
+- Máximo 5 aerolíneas distintas, ordenadas de menor a mayor precio.
+- "price" es numérico (sin símbolos). Si un dato no existe, usa null. NUNCA inventes vuelos ni precios.
+- Si no hay resultados, explícalo y devuelve "flights": [].
 """
 
 

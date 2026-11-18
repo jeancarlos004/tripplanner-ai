@@ -1,108 +1,70 @@
 # app/WeatherAgent/main.py
 """
-Weather Agent - Servidor A2A
-Expone la capacidad de consultar el pronóstico del clima para una ciudad y fecha.
-Publica su agent card en /.well-known/agent-card.json para descubrimiento.
+Weather Agent — Servidor A2A (Bedrock AgentCore Runtime).
+
+Consulta el clima a través de un servidor MCP (weather_mcp_server.py, transporte
+stdio) que expone las herramientas geocode_city y get_forecast sobre Open-Meteo.
+Publica su agent card en /.well-known/agent-card.json.
+
+La respuesta termina SIEMPRE con un bloque ```json``` estructurado, que el
+Orchestrator reenvía al frontend para pintar tarjetas meteorológicas por día.
 """
 
 import os
-from strands import Agent, tool
+import sys
+from pathlib import Path
+
+from mcp import StdioServerParameters, stdio_client
+from strands import Agent
 from strands.models import BedrockModel
 from strands.multiagent.a2a import A2AServer
+from strands.tools.mcp import MCPClient
 
 MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-2")
+MCP_SERVER = Path(__file__).with_name("weather_mcp_server.py")
+
+SYSTEM_PROMPT = """Eres el Weather Agent de TripPlanner AI, especialista en meteorología.
+
+Herramientas MCP:
+- get_forecast(city, start_date, end_date): pronóstico diario (YYYY-MM-DD).
+- geocode_city(city): datos de la ciudad.
+
+FLUJO
+1. Identifica ciudad y rango de fechas. Si solo hay una fecha, úsala como inicio y fin.
+   Si no hay fechas, usa los próximos 3 días.
+2. Llama a get_forecast.
+3. Responde en español con 2-3 líneas: resumen del clima y recomendación (ropa, mejores días).
+   Si source = "historical_estimate", aclara que es una estimación basada en años anteriores.
+4. Termina SIEMPRE con un bloque ```json``` que contenga EXACTAMENTE el objeto devuelto por
+   get_forecast (city, country, source, provider, days). No inventes datos.
+"""
 
 
-@tool
-def get_forecast(city: str, date: str) -> dict:
-    """
-    Consulta el pronóstico del clima para una ciudad en una fecha específica.
-    
-    Args:
-        city: Nombre de la ciudad (ej: "Cartagena", "Bogotá", "Medellín")
-        date: Fecha para el pronóstico en formato legible (ej: "2026-09-20")
-    
-    Returns:
-        Diccionario con información del clima: temperatura, condición, humedad, viento
-    """
-    # Datos simulados para el workshop
-    # En producción, esto consultaría una API real de clima como OpenWeather
-    
-    # Simulamos diferentes climas según la ciudad
-    weather_data = {
-        "cartagena": {
-            "temp_c": 31,
-            "temp_f": 88,
-            "condition": "Soleado",
-            "humidity": 75,
-            "wind_kph": 15,
-            "description": "Día perfecto para la playa con cielo despejado"
-        },
-        "bogota": {
-            "temp_c": 14,
-            "temp_f": 57,
-            "condition": "Nublado",
-            "humidity": 80,
-            "wind_kph": 10,
-            "description": "Clima fresco típico de la sabana"
-        },
-        "medellin": {
-            "temp_c": 22,
-            "temp_f": 72,
-            "condition": "Parcialmente nublado",
-            "humidity": 65,
-            "wind_kph": 12,
-            "description": "Clima primaveral agradable"
-        }
-    }
-    
-    # Buscar la ciudad (case-insensitive)
-    city_lower = city.lower()
-    forecast = weather_data.get(city_lower, {
-        "temp_c": 25,
-        "temp_f": 77,
-        "condition": "Soleado",
-        "humidity": 60,
-        "wind_kph": 10,
-        "description": "Clima agradable"
-    })
-    
-    # Agregar información de la solicitud
-    forecast["city"] = city
-    forecast["date"] = date
-    
-    return forecast
+def main():
+    mcp = MCPClient(lambda: stdio_client(
+        StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])
+    ))
 
+    with mcp:
+        tools = mcp.list_tools_sync()
+        print(f"[OK] MCP de clima conectado — tools: {[t.tool_name for t in tools]}")
 
-def create_agent(context_id: str) -> Agent:
-    """
-    Factory function que crea una instancia del agente de clima.
-    Cada context_id representa una conversación independiente.
-    """
-    return Agent(
-        name="Weather Agent",
-        model=BedrockModel(model_id=MODEL_ID, region_name=AWS_REGION),
-        description="Agente especializado en consultar el pronóstico del clima por ciudad y fecha. "
-                    "Proporciona temperatura, condiciones meteorológicas y recomendaciones.",
-        tools=[get_forecast],
-        callback_handler=None,
-    )
+        def create_agent(context_id: str = "") -> Agent:
+            return Agent(
+                name="Weather Agent",
+                model=BedrockModel(model_id=MODEL_ID, region_name=AWS_REGION, temperature=0.1),
+                description="Agente especializado en el pronóstico del clima por ciudad y fechas: "
+                            "temperatura, condiciones y probabilidad de lluvia.",
+                system_prompt=SYSTEM_PROMPT,
+                tools=tools,
+                callback_handler=None,
+            )
 
+        server = A2AServer(agent_factory=create_agent, host="0.0.0.0", port=9000)
+        print("🚀 Weather Agent A2A Server en el puerto 9000")
+        server.serve()
 
-# Crear el servidor A2A
-# Este servidor:
-# 1. Expone el agente como servicio HTTP
-# 2. Publica automáticamente la agent card en /.well-known/agent-card.json
-# 3. Implementa el protocolo A2A para recibir mensajes de otros agentes
-a2a_server = A2AServer(
-    agent_factory=create_agent,
-    host="0.0.0.0",  # Escucha en todas las interfaces
-    port=9000         # Puerto por defecto (AgentCore lo gestionará)
-)
 
 if __name__ == "__main__":
-    # Inicia el servidor y mantiene el proceso activo
-    print("🚀 Starting Weather Agent A2A Server on port 9000...")
-    print("📋 Agent card available at: /.well-known/agent-card.json")
-    a2a_server.serve()
+    main()

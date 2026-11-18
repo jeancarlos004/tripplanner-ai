@@ -1,48 +1,24 @@
-"""Lambda: GetReservations — Consulta las reservas de un viaje."""
-import json
-import os
-import boto3
-from boto3.dynamodb.conditions import Key
-
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
+"""
+Lambda: GetReservations — consulta reservas.
+  GET /trips/{tripId}/reservations  -> reservas de un viaje
+  GET /reservations                 -> todas las reservas del usuario (?status=...)
+"""
+from common import api_handler, get_trip_or_404, query_prefix, public, one_of, RESERVATION_STATUSES
 
 
-def handler(event, context):
-    try:
-        trip_id = event.get("pathParameters", {}).get("tripId")
+@api_handler
+def handler(user_id, path, query, **_):
+    trip_id = path.get("tripId")
+    if trip_id:
+        get_trip_or_404(user_id, trip_id)
+        items = query_prefix(user_id, f"RES#{trip_id}#")
+    else:
+        items = query_prefix(user_id, "RES#")
 
-        if not trip_id:
-            return _error(400, "tripId es requerido")
+    status = (query or {}).get("status")
+    if status:
+        one_of(status, "status", RESERVATION_STATUSES)
+        items = [r for r in items if r.get("status") == status]
 
-        response = table.query(
-            KeyConditionExpression=Key("PK").eq(f"TRIP#{trip_id}") & Key("SK").begins_with("RESERVATION#")
-        )
-
-        reservations = response.get("Items", [])
-
-        return {
-            "statusCode": 200,
-            "headers": HEADERS,
-            "body": json.dumps({
-                "reservations": reservations,
-                "count": len(reservations)
-            }, default=str)
-        }
-
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
-    }
+    reservations = sorted((public(r) for r in items), key=lambda r: r.get("createdAt", ""), reverse=True)
+    return 200, {"reservations": reservations, "count": len(reservations)}

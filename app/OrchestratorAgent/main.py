@@ -1,18 +1,42 @@
 # app/OrchestratorAgent/main.py
 """
-Orchestrator Agent - Cliente A2A sobre Bedrock AgentCore Runtime
+Orchestrator Agent — TripPlanner AI (Bedrock AgentCore Runtime, protocolo HTTP)
 
-Invoca los agentes especialistas usando botocore.auth.SigV4Auth para firmar
-las requests HTTP directamente, evitando el caché de credenciales de boto3.
+Canal 2 · Interacción agéntica:
+    Frontend ──HTTP streaming (SSE)──▶ AgentCore ──▶ este agente
+        ├─ ask_flights  ─A2A─▶ Flights Agent ─MCP─▶ Ignav (vuelos reales)
+        ├─ ask_weather  ─A2A─▶ Weather Agent ─MCP─▶ servidor MCP de clima (Open-Meteo)
+        └─ Tools de negocio ─HTTPS─▶ API Gateway (autorizador Cognito) ─▶ Lambda ─▶ DynamoDB
 
-Integra AgentCore Memory para persistir preferencias de viaje y resúmenes
-de sesión entre conversaciones del mismo usuario.
+Contrato de entrada (POST /invocations):
+    {"prompt": "texto del usuario", "idToken": "<JWT de Cognito>"}
+
+Contrato de salida (text/event-stream). Cada evento SSE es un JSON:
+    {"type": "status", "message": "Consultando vuelos…"}       indicador de procesamiento
+    {"type": "text",   "delta": "…"}                           texto incremental del agente
+    {"type": "ui",     "component": "flights", "data": {...}}  datos estructurados → componente visual
+    {"type": "error",  "message": "…"}
+    {"type": "done"}
+
+Agent-Driven UI: el agente decide qué herramienta usar; las herramientas devuelven
+datos estructurados que se emiten como eventos "ui" y el frontend los transforma
+en tarjetas (vuelos, clima, viaje, itinerario, reservas).
+
+Seguridad: el idToken se reenvía tal cual a API Gateway, que lo valida con el
+autorizador de Cognito. Así el agente NUNCA decide a qué usuario pertenecen los
+datos: la identidad la impone el backend (control de acceso por usuario).
 """
 
-import os
+import functools
 import json
-import uuid
+import logging
+import os
+import queue
+import re
+import urllib.error
 import urllib.request
+import uuid
+from datetime import date
 
 import boto3
 import botocore.auth
@@ -21,12 +45,12 @@ import botocore.awsrequest
 from strands import Agent, tool
 from strands.models import BedrockModel
 from strands.handlers.callback_handler import null_callback_handler
-from strands.agent.conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-# ── Importaciones de memoria ─────────────────────────────────────────────────
-
-from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
+from bedrock_agentcore.memory.integrations.strands.config import (
+    AgentCoreMemoryConfig,
+    RetrievalConfig,
+)
 from bedrock_agentcore.memory.integrations.strands.session_manager import (
     AgentCoreMemorySessionManager,
 )
@@ -36,33 +60,43 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import (
 app = BedrockAgentCoreApp()
 
 AWS_REGION  = os.environ.get("AWS_DEFAULT_REGION", "us-east-2")
-MODEL_ID    = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+MODEL_ID    = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-pro-v1:0")
 FLIGHTS_URL = os.environ.get("FLIGHTS_AGENT_URL", "")
 WEATHER_URL = os.environ.get("WEATHER_AGENT_URL", "")
-
-# Vacío → el agente sigue funcionando sin memoria gestionada.
-MEMORY_ID   = os.environ.get("TRIP_MEMORY_ID") or None
+API_URL     = os.environ.get("TRIPPLANNER_API_URL", "").rstrip("/")
 
 
-# ── Invocación A2A con botocore SigV4 ────────────────────────────────────────
+def _memory_id() -> str | None:
+    """Acepta el ID o el ARN de la memoria (memory/<id>)."""
+    raw = os.environ.get("TRIP_MEMORY_ID", "").strip()
+    if not raw:
+        return None
+    return raw.split("memory/", 1)[1] if "memory/" in raw else raw
+
+
+MEMORY_ID = _memory_id()
+
+STATUS_BY_TOOL = {
+    "ask_flights": "✈️ Flight Agent consultando vuelos (MCP)…",
+    "ask_weather": "🌤️ Weather Agent consultando el clima (MCP)…",
+    "create_trip": "🗺️ Creando tu viaje…",
+    "get_trips": "📂 Recuperando tus viajes…",
+    "get_trip_details": "📂 Recuperando el detalle del viaje…",
+    "update_trip": "✏️ Actualizando el viaje…",
+    "create_itinerary": "📅 Guardando el itinerario…",
+    "update_itinerary": "✏️ Actualizando el itinerario…",
+    "create_reservation": "📋 Registrando la reserva (simulada)…",
+    "get_reservations": "📋 Consultando reservas…",
+    "update_reservation": "✏️ Actualizando la reserva…",
+    "save_preferences": "💾 Guardando tus preferencias…",
+}
+
+
+# ── Invocación A2A a los especialistas (SigV4) ───────────────────────────────
 
 def _invoke_a2a_runtime(base_url: str, message: str) -> str:
-    """
-    Invoca un runtime AgentCore con protocolo A2A.
-
-    Usa botocore.auth.SigV4Auth para firmar la request HTTP directamente,
-    lo que garantiza que las credenciales se leen frescas del entorno en
-    cada llamada (sin el caché de boto3 client).
-
-    Args:
-        base_url: URL base del runtime (sin /invocations).
-        message:  Texto de la petición al agente especialista.
-
-    Returns:
-        Texto de la respuesta del agente especialista.
-    """
+    """Invoca un runtime AgentCore A2A firmando la petición con SigV4."""
     invocation_url = base_url.rstrip("/") + "/invocations"
-
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -77,12 +111,8 @@ def _invoke_a2a_runtime(base_url: str, message: str) -> str:
         },
     }
     payload_bytes = json.dumps(payload).encode("utf-8")
+    creds = boto3.Session().get_credentials().get_frozen_credentials()
 
-    # Obtener credenciales frescas del entorno
-    session = boto3.Session()
-    creds   = session.get_credentials().get_frozen_credentials()
-
-    # Firmar la request con botocore SigV4 (implementación correcta y probada)
     aws_request = botocore.awsrequest.AWSRequest(
         method="POST",
         url=invocation_url,
@@ -94,226 +124,500 @@ def _invoke_a2a_runtime(base_url: str, message: str) -> str:
     )
     botocore.auth.SigV4Auth(creds, "bedrock-agentcore", AWS_REGION).add_auth(aws_request)
 
-    # Ejecutar la request HTTP con los headers firmados
     http_request = urllib.request.Request(
-        url=invocation_url,
-        data=payload_bytes,
-        headers=dict(aws_request.headers),
-        method="POST",
+        url=invocation_url, data=payload_bytes, headers=dict(aws_request.headers), method="POST"
     )
-
     with urllib.request.urlopen(http_request, timeout=120) as resp:
         data = json.loads(resp.read())
 
     result = data.get("result", {})
-
-    # Formato Task: result.artifacts[].parts[].text
     for artifact in result.get("artifacts", []):
         texts = [p["text"] for p in artifact.get("parts", []) if p.get("kind") == "text"]
         if texts:
             return "\n".join(texts)
-
-    # Formato Message: result.parts[].text
     for part in result.get("parts", []):
         if part.get("kind") == "text":
             return part["text"]
-
     return json.dumps(result)
 
 
-# ── Tools del orquestador ────────────────────────────────────────────────────
+_JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_THINKING = re.compile(r"<thinking>.*?</thinking>", re.DOTALL)
 
-@tool
-def ask_flights(request: str) -> str:
+
+def _extract_json_block(text: str) -> dict | None:
+    """Extrae el último bloque ```json {...}``` de la respuesta de un especialista."""
+    for raw in reversed(_JSON_BLOCK.findall(text or "")):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+# ── Cliente de la API de negocio (Canal 1 reutilizado por las Tools) ─────────
+
+class BusinessApi:
+    """Llama a API Gateway con el token del usuario. La Lambda valida y persiste."""
+
+    def __init__(self, id_token: str):
+        self.id_token = id_token
+
+    def call(self, method: str, path: str, body: dict | None = None) -> dict:
+        if not API_URL:
+            raise RuntimeError("TRIPPLANNER_API_URL no configurado")
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            API_URL + path,
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json", "Authorization": self.id_token},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read()).get("error", "")
+            except Exception:
+                msg = ""
+            raise ApiCallError(e.code, msg or f"HTTP {e.code}") from None
+
+
+class ApiCallError(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+# ── Construcción de Tools por petición ───────────────────────────────────────
+
+def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
     """
-    Delega en el Flights Agent la búsqueda de vuelos.
-
-    Args:
-        request: Petición en lenguaje natural sobre vuelos.
-                 Incluye origen, destino y fecha si están disponibles.
-
-    Returns:
-        Lista de vuelos disponibles con horarios y precios.
+    Crea las Tools para esta invocación. Cada Tool:
+      1) llama a su Lambda (vía API Gateway) o al agente especialista,
+      2) emite un evento "ui" con datos estructurados para el frontend,
+      3) devuelve al LLM un resultado compacto en JSON.
     """
-    if not FLIGHTS_URL:
-        return "Error: FLIGHTS_AGENT_URL no configurado."
-    try:
-        return _invoke_a2a_runtime(FLIGHTS_URL, request)
-    except Exception as e:
-        return f"Error al consultar el Flights Agent: {type(e).__name__}: {e}"
 
+    def emit(component: str, data):
+        ui_events.put({"type": "ui", "component": component, "data": data})
 
-@tool
-def ask_weather(request: str) -> str:
-    """
-    Delega en el Weather Agent la consulta del pronóstico del clima.
+    def safe(fn):
+        """Convierte errores de negocio en texto legible para el LLM."""
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except ApiCallError as e:
+                return json.dumps({"ok": False, "status": e.status, "error": e.message}, ensure_ascii=False)
+            except Exception as e:  # noqa: BLE001
+                return json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
+        return run
 
-    Args:
-        request: Petición en lenguaje natural sobre el clima.
-                 Incluye ciudad y fecha si están disponibles.
+    # ── Especialistas (A2A) ──────────────────────────────────────────────────
 
-    Returns:
-        Pronóstico del clima con temperatura y condiciones.
-    """
-    if not WEATHER_URL:
-        return "Error: WEATHER_AGENT_URL no configurado."
-    try:
-        return _invoke_a2a_runtime(WEATHER_URL, request)
-    except Exception as e:
-        return f"Error al consultar el Weather Agent: {type(e).__name__}: {e}"
+    @tool
+    def ask_flights(request: str) -> str:
+        """
+        Delega en el Flight Agent la búsqueda de vuelos reales (MCP de vuelos).
 
+        Args:
+            request: Petición en lenguaje natural con origen, destino, fecha (YYYY-MM-DD)
+                     y número de pasajeros. Ej: "Vuelos de Bogotá a Cartagena el 2027-02-10 para 3 adultos".
+        """
+        if not FLIGHTS_URL:
+            return "Error: FLIGHTS_AGENT_URL no configurado."
+        try:
+            text = _THINKING.sub("", _invoke_a2a_runtime(FLIGHTS_URL, request)).strip()
+        except Exception as e:  # noqa: BLE001
+            return f"Error al consultar el Flight Agent: {type(e).__name__}: {e}"
+        data = _extract_json_block(text)
+        if data and data.get("flights"):
+            emit("flights", data)
+        return text
 
-# ── Memoria ───────────────────────────────────────────────────────────────────
+    @tool
+    def ask_weather(request: str) -> str:
+        """
+        Delega en el Weather Agent la consulta del pronóstico del clima (MCP de clima).
 
-def _build_session_manager(session_id: str, actor_id: str):
-    """
-    Crea un AgentCoreMemorySessionManager para la sesión y usuario dados.
-    Devuelve None si TRIP_MEMORY_ID no está configurado, en cuyo caso el
-    agente funciona igual pero sin memoria gestionada.
+        Args:
+            request: Petición con ciudad y rango de fechas (YYYY-MM-DD).
+                     Ej: "Clima en Cartagena del 2027-02-10 al 2027-02-13".
+        """
+        if not WEATHER_URL:
+            return "Error: WEATHER_AGENT_URL no configurado."
+        try:
+            text = _THINKING.sub("", _invoke_a2a_runtime(WEATHER_URL, request)).strip()
+        except Exception as e:  # noqa: BLE001
+            return f"Error al consultar el Weather Agent: {type(e).__name__}: {e}"
+        data = _extract_json_block(text)
+        if data and data.get("days"):
+            emit("weather", data)
+        return text
 
-    Args:
-        session_id: Identificador único de la conversación actual.
-        actor_id:   Identidad del usuario (para separar recuerdos por usuario).
+    # ── Viajes ───────────────────────────────────────────────────────────────
 
-    Returns:
-        AgentCoreMemorySessionManager o None.
-    """
-    if not MEMORY_ID:
-        return None
+    @tool
+    @safe
+    def create_trip(origin: str, destination: str, start_date: str, end_date: str,
+                    travelers: int, budget: float, currency: str = "COP",
+                    preferences: str = "", name: str = "") -> str:
+        """
+        CreateTrip — crea y guarda un viaje del usuario en DynamoDB.
 
-    config = AgentCoreMemoryConfig(
-        memory_id=MEMORY_ID,
-        session_id=session_id,  # una conversación concreta
-        actor_id=actor_id,      # la identidad del usuario
-    )
-    return AgentCoreMemorySessionManager(config, region_name=AWS_REGION)
+        Args:
+            origin: Ciudad de origen (ej. "Bogotá").
+            destination: Ciudad de destino (ej. "Cartagena").
+            start_date: Fecha de inicio YYYY-MM-DD.
+            end_date: Fecha de fin YYYY-MM-DD.
+            travelers: Número TOTAL de viajeros (el usuario + acompañantes).
+            budget: Presupuesto total numérico (ej. 5000000).
+            currency: Moneda ISO de 3 letras (por defecto COP).
+            preferences: Preferencias o restricciones del viaje en texto.
+            name: Nombre corto del viaje (opcional).
+        """
+        res = api.call("POST", "/trips", {
+            "origin": origin, "destination": destination, "startDate": start_date,
+            "endDate": end_date, "travelers": travelers, "budget": budget,
+            "currency": currency, "preferences": preferences, "name": name or None,
+        })
+        emit("trip", res["trip"])
+        return json.dumps({"ok": True, "tripId": res["tripId"], "trip": res["trip"]}, ensure_ascii=False)
+
+    @tool
+    @safe
+    def get_trips() -> str:
+        """GetTrips — lista los viajes guardados del usuario (destino, fechas, presupuesto, estado)."""
+        res = api.call("GET", "/trips")
+        emit("trips", res["trips"])
+        return json.dumps({"ok": True, "trips": res["trips"]}, ensure_ascii=False)
+
+    @tool
+    @safe
+    def get_trip_details(trip_id: str) -> str:
+        """
+        Recupera un viaje con su itinerario y sus reservas.
+
+        Args:
+            trip_id: Identificador del viaje (obtenido de get_trips o create_trip).
+        """
+        res = api.call("GET", f"/trips/{trip_id}")
+        emit("trip", res["trip"])
+        if res.get("itinerary"):
+            emit("itinerary", {"trip": res["trip"], "days": res["itinerary"]})
+        if res.get("reservations"):
+            emit("reservations", res["reservations"])
+        return json.dumps({"ok": True, **res}, ensure_ascii=False)
+
+    @tool
+    @safe
+    def update_trip(trip_id: str, changes: dict) -> str:
+        """
+        UpdateTrip — actualiza datos de un viaje.
+
+        Args:
+            trip_id: Identificador del viaje.
+            changes: Campos a cambiar. Claves válidas: name, origin, destination, startDate,
+                     endDate (YYYY-MM-DD), travelers, budget, preferences,
+                     status (PLANNING | CONFIRMED | COMPLETED | CANCELLED).
+        """
+        res = api.call("PUT", f"/trips/{trip_id}", changes)
+        emit("trip", res["trip"])
+        return json.dumps({"ok": True, "trip": res["trip"]}, ensure_ascii=False)
+
+    # ── Itinerarios ──────────────────────────────────────────────────────────
+
+    @tool
+    @safe
+    def create_itinerary(trip_id: str, days: list[dict]) -> str:
+        """
+        CreateItinerary — guarda el itinerario completo de un viaje (un elemento por día).
+
+        Args:
+            trip_id: Identificador del viaje.
+            days: Lista de días. Cada día:
+                  {"date": "YYYY-MM-DD", "notes": "texto opcional",
+                   "activities": [{"time": "09:00", "title": "...", "description": "...",
+                                   "location": "...", "category": "cultura|playa|gastronomía|...",
+                                   "estimatedCost": 120000}]}
+                  Las fechas deben estar dentro del rango del viaje.
+        """
+        res = api.call("POST", f"/trips/{trip_id}/itinerary", {"days": days})
+        emit("itinerary", {"tripId": trip_id, "days": res["itinerary"]})
+        return json.dumps({"ok": True, "message": res["message"], "days": len(res["itinerary"])}, ensure_ascii=False)
+
+    @tool
+    @safe
+    def update_itinerary(trip_id: str, day: str, activities: list[dict], notes: str = "") -> str:
+        """
+        UpdateItinerary — reemplaza las actividades de un día del itinerario.
+
+        Args:
+            trip_id: Identificador del viaje.
+            day: Día a modificar (YYYY-MM-DD).
+            activities: Nueva lista de actividades del día (mismo formato que create_itinerary).
+            notes: Notas del día (opcional).
+        """
+        body = {"activities": activities}
+        if notes:
+            body["notes"] = notes
+        res = api.call("PUT", f"/trips/{trip_id}/itinerary/{day}", body)
+        emit("itinerary", {"tripId": trip_id, "days": [res["day"]]})
+        return json.dumps({"ok": True, "day": res["day"]}, ensure_ascii=False)
+
+    # ── Reservas ─────────────────────────────────────────────────────────────
+
+    @tool
+    @safe
+    def create_reservation(trip_id: str, reservation_type: str, title: str, details: dict,
+                           price: float = 0, reservation_date: str = "") -> str:
+        """
+        CreateReservation — registra una reserva SIMULADA asociada a un viaje.
+        NUNCA incluyas datos de tarjeta ni de pago.
+
+        Args:
+            trip_id: Identificador del viaje.
+            reservation_type: FLIGHT | HOTEL | ACTIVITY.
+            title: Título corto (ej. "Avianca BOG→CTG", "Hotel Caribe 3 noches").
+            details: Datos de la reserva (aerolínea, horarios, hotel, pasajeros, etc.).
+            price: Precio total estimado.
+            reservation_date: Fecha de la reserva YYYY-MM-DD (opcional).
+        """
+        body = {"type": reservation_type.upper(), "title": title, "details": details, "price": price}
+        if reservation_date:
+            body["date"] = reservation_date
+        res = api.call("POST", f"/trips/{trip_id}/reservations", body)
+        emit("reservations", [res["reservation"]])
+        return json.dumps({"ok": True, "reservationId": res["reservationId"], "status": res["status"]},
+                          ensure_ascii=False)
+
+    @tool
+    @safe
+    def get_reservations(trip_id: str = "") -> str:
+        """
+        GetReservations — consulta reservas del usuario.
+
+        Args:
+            trip_id: Si se indica, solo las de ese viaje; vacío = todas las reservas.
+        """
+        path = f"/trips/{trip_id}/reservations" if trip_id else "/reservations"
+        res = api.call("GET", path)
+        emit("reservations", res["reservations"])
+        return json.dumps({"ok": True, "reservations": res["reservations"]}, ensure_ascii=False)
+
+    @tool
+    @safe
+    def update_reservation(trip_id: str, reservation_id: str, changes: dict) -> str:
+        """
+        UpdateReservation — actualiza una reserva o su estado.
+
+        Args:
+            trip_id: Identificador del viaje.
+            reservation_id: Identificador de la reserva.
+            changes: Campos a cambiar: status (SIMULADA | PENDIENTE), title, details, price, date.
+                     CONFIRMADA solo es posible con providerReference de un proveedor real.
+        """
+        res = api.call("PUT", f"/trips/{trip_id}/reservations/{reservation_id}", changes)
+        emit("reservations", [res["reservation"]])
+        return json.dumps({"ok": True, "reservation": res["reservation"]}, ensure_ascii=False)
+
+    # ── Preferencias ─────────────────────────────────────────────────────────
+
+    @tool
+    @safe
+    def save_preferences(preferences: dict) -> str:
+        """
+        Guarda preferencias de viaje persistentes del usuario en su perfil.
+
+        Args:
+            preferences: Claves válidas: budgetLevel, activityTypes (lista), dietaryRestrictions,
+                         preferredAirlines (lista), seatPreference, accommodationType,
+                         travelPace, homeCity, currency, notes.
+        """
+        current = api.call("GET", "/profile").get("profile", {}).get("preferences", {}) or {}
+        merged = {**current, **preferences}
+        res = api.call("PUT", "/profile", {"preferences": merged})
+        emit("preferences", res["profile"].get("preferences", {}))
+        return json.dumps({"ok": True, "preferences": merged}, ensure_ascii=False)
+
+    return [
+        ask_flights, ask_weather,
+        create_trip, get_trips, get_trip_details, update_trip,
+        create_itinerary, update_itinerary,
+        create_reservation, get_reservations, update_reservation,
+        save_preferences,
+    ]
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """Eres Trip Planner, un asistente experto en planificación de viajes.
+SYSTEM_PROMPT = """Eres TripPlanner AI, un asistente experto que ayuda a planificar, organizar y gestionar viajes.
+Hoy es {today}. Responde SIEMPRE en español, con un tono cercano y profesional.
 
-FLUJO (obligatorio):
-1. Detecta origen, destino y fecha en el mensaje del usuario.
-2. Invoca ask_flights con esos datos.
-3. Invoca ask_weather con destino y fecha.
-4. Construye la respuesta final con el formato exacto de abajo.
+Perfil persistente del usuario (DynamoDB): {profile}
 
-FORMATO DE RESPUESTA (usa exactamente esta estructura):
+HERRAMIENTAS
+- ask_flights → Flight Agent (vuelos reales vía MCP). Incluye origen, destino, fecha y nº de pasajeros.
+- ask_weather → Weather Agent (pronóstico vía MCP). Incluye ciudad y rango de fechas.
+- create_trip, get_trips, get_trip_details, update_trip → viajes.
+- create_itinerary, update_itinerary → itinerario día a día.
+- create_reservation, get_reservations, update_reservation → reservas SIMULADAS.
+- save_preferences → guarda preferencias que el usuario exprese (presupuesto, actividades, aerolíneas…).
 
----
-## ✈️ Vuelos disponibles · {origen} → {destino} · {fecha}
+FLUJO
+1. Si el usuario quiere planear un viaje: identifica origen, destino, fechas, viajeros y presupuesto.
+   - "viajo con dos personas más" = 3 viajeros en total.
+   - Si no da fechas, propón fechas concretas (p. ej. dentro de 3 semanas) y dilo explícitamente.
+   - Llama a ask_flights y ask_weather (puedes llamarlas en paralelo).
+2. Resume los resultados en 3-6 líneas: mejor opción de vuelo según precio/horario, clima esperado
+   y si el plan encaja en el presupuesto. Ofrece crear el viaje.
+3. Cuando el usuario pida crear/guardar el viaje: create_trip, y a continuación create_itinerary con
+   2-4 actividades por día coherentes con el clima, el presupuesto y las preferencias.
+4. Si el usuario pide reservar: create_reservation (tipo FLIGHT, HOTEL o ACTIVITY) con estado simulado.
+   Aclara que la reserva es SIMULADA (no hay proveedor real).
+5. Para "mis viajes", "mis reservas" o retomar un viaje anterior usa get_trips / get_trip_details / get_reservations.
 
-| # | Aerolínea | Precio | Reservar |
-|---|-----------|--------|----------|
-| 1 | LATAM | USD 694 | [Reservar](url) |
-| 2 | Avianca | USD 784 | [Reservar](url) |
-(continúa con todos los vuelos recibidos)
-
----
-## 🌤️ Clima en {destino} · {fecha}
-
-| Condición | Temperatura | Humedad | Viento |
-|-----------|-------------|---------|--------|
-| Soleado ☀️ | 8°C / 46°F | 65% | 15 km/h |
-
----
-## 💡 Recomendación
-
-(2-3 líneas prácticas: mejor opción de vuelo por precio, qué ropa llevar según el clima)
-
----
-
-REGLAS:
-- Responde siempre en español.
-- Usa la tabla Markdown para vuelos y clima, sin omitir ningún vuelo recibido.
-- No agregues texto fuera del formato.
-- Si falta algún dato (ej: horario), pon "—" en esa celda.
+REGLAS
+- La interfaz muestra los resultados de las herramientas como tarjetas visuales (vuelos, clima, viaje,
+  itinerario, reservas). NO repitas tablas ni listados completos: comenta lo importante.
+- Usa los tripId devueltos por las herramientas; nunca inventes identificadores, precios ni vuelos.
+- Si una herramienta devuelve error, explícalo en lenguaje sencillo y propone cómo seguir.
+- NUNCA pidas ni guardes datos de tarjetas, CVV ni información de pago.
+- Fechas siempre en formato YYYY-MM-DD al llamar herramientas.
 """
 
 
-def _build_agent(session_id: str, actor_id: str) -> Agent:
+# ── Memoria (AgentCore Memory) ────────────────────────────────────────────────
+
+def _build_session_manager(session_id: str, actor_id: str):
     """
-    Construye el agente orquestador inyectando el session manager de memoria
-    si TRIP_MEMORY_ID está configurado, o NullConversationManager si no.
-
-    Args:
-        session_id: ID de la sesión actual (del contexto AgentCore).
-        actor_id:   ID del usuario (del contexto AgentCore).
-
-    Returns:
-        Instancia de Agent lista para invocar.
+    Memoria conversacional (≠ persistencia de negocio):
+      - corto plazo: historial de la sesión,
+      - largo plazo: preferencias, hechos y resúmenes extraídos por las estrategias
+        USER_PREFERENCE, SEMANTIC y SUMMARIZATION, que se inyectan como contexto.
     """
-    session_manager = _build_session_manager(session_id, actor_id)
-
-    agent_kwargs = {
-        "name": "Trip Planner Orchestrator",
-        "model": BedrockModel(model_id=MODEL_ID, region_name=AWS_REGION),
-        "system_prompt": SYSTEM_PROMPT,
-        "tools": [ask_flights, ask_weather],
-        "callback_handler": null_callback_handler,
-    }
-
-    if session_manager is not None:
-        # El session manager gestiona el historial y la memoria automáticamente.
-        agent_kwargs["session_manager"] = session_manager
-    else:
-        # Sin memoria configurada: cada invocación es stateless.
-        agent_kwargs["conversation_manager"] = NullConversationManager()
-
-    return Agent(**agent_kwargs)
+    if not MEMORY_ID:
+        return None
+    config = AgentCoreMemoryConfig(
+        memory_id=MEMORY_ID,
+        session_id=session_id,
+        actor_id=actor_id,
+        retrieval_config={
+            "/preferences/{actorId}/": RetrievalConfig(top_k=5, relevance_score=0.3),
+            "/facts/{actorId}/": RetrievalConfig(top_k=5, relevance_score=0.4),
+        },
+    )
+    return AgentCoreMemorySessionManager(config, region_name=AWS_REGION)
 
 
-# ── Validación de payload ─────────────────────────────────────────────────────
+# ── Entrypoint AgentCore (HTTP streaming) ─────────────────────────────────────
 
-def _extract_prompt(payload: dict) -> str:
-    """
-    Extrae y valida el prompt del payload de entrada.
-    Soporta tanto {"prompt": "..."} como historial de mensajes.
+def _sanitize_actor(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", value)[:100] or "anonymous"
 
-    Args:
-        payload: Diccionario recibido por el entrypoint.
-
-    Returns:
-        String del prompt validado.
-
-    Raises:
-        ValueError: Si el prompt está ausente, no es string, o está vacío.
-    """
-    prompt = payload.get("prompt", "")
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise ValueError("El campo 'prompt' debe ser un string no vacío.")
-    return prompt.strip()
-
-
-# ── Entrypoint AgentCore ──────────────────────────────────────────────────────
 
 @app.entrypoint
 async def invoke(payload, context):
-    """
-    Punto de entrada del runtime AgentCore.
+    prompt = payload.get("prompt") if isinstance(payload, dict) else None
+    id_token = payload.get("idToken") if isinstance(payload, dict) else None
 
-    Lee session_id y actor_id del contexto para separar correctamente
-    los recuerdos por usuario y conversación en AgentCore Memory.
-    """
-    prompt = _extract_prompt(payload)
+    if not isinstance(prompt, str) or not prompt.strip():
+        yield {"type": "error", "message": "El campo 'prompt' debe ser un texto no vacío."}
+        yield {"type": "done"}
+        return
+    if len(prompt) > 4000:
+        yield {"type": "error", "message": "El mensaje es demasiado largo (máx. 4000 caracteres)."}
+        yield {"type": "done"}
+        return
+    if not isinstance(id_token, str) or not id_token:
+        yield {"type": "error", "message": "Sesión no válida. Inicia sesión de nuevo."}
+        yield {"type": "done"}
+        return
 
-    # Leer identidades del contexto AgentCore; usar defaults seguros si no están.
+    yield {"type": "status", "message": "🧭 Orchestrator interpretando tu solicitud…"}
+
+    # La identidad del usuario la valida API Gateway (Cognito). Nunca se toma del payload.
+    api = BusinessApi(id_token)
+    try:
+        profile = api.call("GET", "/profile").get("profile", {})
+    except ApiCallError as e:
+        msg = "Tu sesión expiró. Inicia sesión de nuevo." if e.status in (401, 403) else \
+              "No se pudo validar tu sesión en este momento."
+        yield {"type": "error", "message": msg}
+        yield {"type": "done"}
+        return
+
+    actor_id = _sanitize_actor(profile.get("userId", "anonymous"))
     session_id = getattr(context, "session_id", None) or str(uuid.uuid4())
-    actor_id   = getattr(context, "actor_id",   None) or "default-user"
 
-    agent  = _build_agent(session_id, actor_id)
-    result = agent(prompt)
+    ui_events: "queue.Queue[dict]" = queue.Queue()
+    system_prompt = SYSTEM_PROMPT.format(
+        today=date.today().isoformat(),
+        profile=json.dumps({"name": profile.get("name"), "preferences": profile.get("preferences", {})},
+                           ensure_ascii=False),
+    )
 
-    # Extraer el texto final del resultado síncrono.
-    # result.message es {"role": "assistant", "content": [{"text": "..."}]}
-    text = result.message["content"][0]["text"]
-    yield {"text": text}
+    agent_kwargs = {
+        "name": "TripPlanner Orchestrator",
+        "model": BedrockModel(model_id=MODEL_ID, region_name=AWS_REGION, temperature=0.3),
+        "system_prompt": system_prompt,
+        "tools": _build_tools(api, ui_events),
+        "callback_handler": null_callback_handler,
+    }
+    session_manager = _build_session_manager(session_id, actor_id)
+    if session_manager is not None:
+        agent_kwargs["session_manager"] = session_manager
+    agent = Agent(**agent_kwargs)
+
+    announced: set[str] = set()
+
+    def drain():
+        while True:
+            try:
+                yield ui_events.get_nowait()
+            except queue.Empty:
+                return
+
+    in_thinking = False
+    try:
+        async for event in agent.stream_async(prompt.strip()):
+            for ui in drain():
+                yield ui
+
+            tool_use = event.get("current_tool_use") if isinstance(event, dict) else None
+            if tool_use and tool_use.get("toolUseId") not in announced and tool_use.get("name"):
+                announced.add(tool_use["toolUseId"])
+                yield {"type": "status",
+                       "message": STATUS_BY_TOOL.get(tool_use["name"], f"Usando {tool_use['name']}…")}
+
+            chunk = event.get("data") if isinstance(event, dict) else None
+            if isinstance(chunk, str) and chunk:
+                # Oculta los bloques <thinking> que algunos modelos emiten
+                if "<thinking>" in chunk:
+                    in_thinking = True
+                if not in_thinking:
+                    yield {"type": "text", "delta": chunk}
+                if "</thinking>" in chunk:
+                    in_thinking = False
+                    tail = chunk.split("</thinking>", 1)[1]
+                    if tail:
+                        yield {"type": "text", "delta": tail}
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Error en el Orchestrator")
+        yield {"type": "error", "message": f"Ocurrió un problema procesando tu solicitud ({type(e).__name__})."}
+
+    for ui in drain():
+        yield ui
+    yield {"type": "done"}
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Trip Planner Orchestrator...")
+    print("🚀 TripPlanner Orchestrator")
     print(f"📡 Flights : {FLIGHTS_URL or '(no configurado)'}")
     print(f"📡 Weather : {WEATHER_URL or '(no configurado)'}")
-    print(f"🧠 Memory  : {MEMORY_ID  or '(sin memoria — modo stateless)'}")
+    print(f"🔗 API     : {API_URL or '(no configurado)'}")
+    print(f"🧠 Memory  : {MEMORY_ID or '(sin memoria)'}")
     app.run()

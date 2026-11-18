@@ -1,79 +1,54 @@
-"""Lambda: UpdateReservation — Actualiza una reserva o su estado."""
-import json
-import os
+"""
+Lambda: UpdateReservation — actualiza una reserva o su estado.
+PUT /trips/{tripId}/reservations/{reservationId}
+
+Reglas de estado:
+  SIMULADA <-> PENDIENTE  (permitido)
+  -> CONFIRMADA solo con 'providerReference' (confirmación de un proveedor real)
+"""
 from datetime import datetime, timezone
-import boto3
 
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
-
-ALLOWED_STATUSES = ["SIMULADA", "PENDIENTE", "CONFIRMADA"]
+from common import (api_handler, table, pk, get_trip_or_404, one_of, text, money, iso_date,
+                    clean_json, no_payment_data, build_update, bad_request, public,
+                    RESERVATION_STATUSES, RESERVATION_TYPES)
 
 
-def handler(event, context):
-    try:
-        trip_id = event.get("pathParameters", {}).get("tripId")
-        reservation_id = event.get("pathParameters", {}).get("reservationId")
-        body = json.loads(event.get("body") or "{}")
+@api_handler
+def handler(user_id, body, path, **_):
+    trip_id = path.get("tripId")
+    reservation_id = path.get("reservationId")
+    get_trip_or_404(user_id, trip_id)
+    if not reservation_id:
+        raise bad_request("reservationId es requerido")
 
-        if not trip_id or not reservation_id:
-            return _error(400, "tripId y reservationId son requeridos")
+    fields = {}
+    if "status" in body:
+        status = one_of(body["status"], "status", RESERVATION_STATUSES)
+        if status == "CONFIRMADA":
+            ref = text(body.get("providerReference"), "providerReference", 100, required=False)
+            if not ref:
+                raise bad_request("CONFIRMADA requiere providerReference de un proveedor real")
+            fields["providerReference"] = ref
+            fields["provider"] = text(body.get("provider"), "provider", 60, required=False) or "EXTERNAL"
+        fields["status"] = status
+    if "type" in body:    fields["type"] = one_of(body["type"], "type", RESERVATION_TYPES)
+    if "title" in body:   fields["title"] = text(body["title"], "title", 200, required=False)
+    if "details" in body: fields["details"] = no_payment_data(clean_json(body["details"], "details"))
+    if "price" in body:   fields["price"] = money(body["price"], "price")
+    if "date" in body:    fields["date"] = iso_date(body["date"], "date")
 
-        if "status" in body and body["status"] not in ALLOWED_STATUSES:
-            return _error(400, f"Estado inválido. Valores: {ALLOWED_STATUSES}")
+    if not fields:
+        raise bad_request("No hay campos para actualizar")
+    fields["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
-        update_parts = []
-        expr_values = {":updatedAt": datetime.now(timezone.utc).isoformat()}
-        expr_names = {"#updatedAt": "updatedAt"}
-        update_parts.append("#updatedAt = :updatedAt")
-
-        if "status" in body:
-            expr_values[":status"] = body["status"]
-            update_parts.append("#status = :status")
-            expr_names["#status"] = "status"
-
-        if "details" in body:
-            expr_values[":details"] = body["details"]
-            update_parts.append("#details = :details")
-            expr_names["#details"] = "details"
-
-        if "price" in body:
-            expr_values[":price"] = str(body["price"])
-            update_parts.append("#price = :price")
-            expr_names["#price"] = "price"
-
-        table.update_item(
-            Key={"PK": f"TRIP#{trip_id}", "SK": f"RESERVATION#{reservation_id}"},
-            UpdateExpression="SET " + ", ".join(update_parts),
-            ExpressionAttributeValues=expr_values,
-            ExpressionAttributeNames=expr_names,
-            ConditionExpression="attribute_exists(PK)"
-        )
-
-        return {
-            "statusCode": 200,
-            "headers": HEADERS,
-            "body": json.dumps({
-                "message": "Reserva actualizada",
-                "reservationId": reservation_id
-            })
-        }
-
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return _error(404, "Reserva no encontrada")
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
-    }
+    expr, names, values = build_update(fields)
+    updated = table.update_item(
+        Key={"PK": pk(user_id), "SK": f"RES#{trip_id}#{reservation_id}"},
+        UpdateExpression=expr,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+        ConditionExpression="attribute_exists(PK)",
+        ReturnValues="ALL_NEW",
+    )["Attributes"]
+    return 200, {"message": "Reserva actualizada", "reservationId": reservation_id,
+                 "reservation": public(updated)}

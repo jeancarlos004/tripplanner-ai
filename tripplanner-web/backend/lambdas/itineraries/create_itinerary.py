@@ -1,64 +1,60 @@
-"""Lambda: CreateItinerary — Crea el itinerario de un viaje en DynamoDB."""
-import json
-import os
+"""
+Lambda: CreateItinerary — crea (o reemplaza) el itinerario de un viaje.
+POST /trips/{tripId}/itinerary
+
+Body aceptado:
+  {"days": [{"date": "YYYY-MM-DD", "activities": [...], "notes": "..."}, ...]}
+  o un único día: {"date": "...", "activities": [...], "notes": "..."}
+Cada fecha debe estar dentro del rango del viaje.
+"""
 from datetime import datetime, timezone
-import boto3
 
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
+from common import api_handler, table, pk, get_trip_or_404, iso_date, text, bad_request, public
+from itineraries.validation import validate_activities
 
 
-def handler(event, context):
-    try:
-        trip_id = event.get("pathParameters", {}).get("tripId")
-        user_id = event.get("requestContext", {}).get("authorizer", {}).get("userId", "default-user")
-        body = json.loads(event.get("body") or "{}")
+@api_handler
+def handler(user_id, body, path, **_):
+    trip_id = path.get("tripId")
+    trip = get_trip_or_404(user_id, trip_id)
 
-        if not trip_id:
-            return _error(400, "tripId es requerido")
+    days = body.get("days")
+    if days is None and "date" in body:
+        days = [body]
+    if not isinstance(days, list) or not days:
+        raise bad_request("Envía 'days' (lista) o un día con 'date' y 'activities'")
+    if len(days) > 90:
+        raise bad_request("Máximo 90 días de itinerario")
 
-        if "date" not in body or "activities" not in body:
-            return _error(400, "Campos requeridos: date, activities")
-
-        now = datetime.now(timezone.utc).isoformat()
-
-        item = {
-            "PK": f"TRIP#{trip_id}",
-            "SK": f"ITINERARY#{body['date']}",
+    now = datetime.now(timezone.utc).isoformat()
+    items, seen = [], set()
+    for i, d in enumerate(days):
+        if not isinstance(d, dict):
+            raise bad_request(f"days[{i}] debe ser un objeto")
+        day = iso_date(d.get("date"), f"days[{i}].date")
+        if not trip["startDate"] <= day <= trip["endDate"]:
+            raise bad_request(f"La fecha {day} está fuera del viaje ({trip['startDate']} a {trip['endDate']})")
+        if day in seen:
+            raise bad_request(f"Fecha duplicada: {day}")
+        seen.add(day)
+        items.append({
+            "PK": pk(user_id),
+            "SK": f"ITIN#{trip_id}#{day}",
+            "entity": "ITINERARY_DAY",
             "tripId": trip_id,
-            "userId": user_id,
-            "date": body["date"],
-            "activities": body["activities"],
-            "notes": body.get("notes", ""),
+            "date": day,
+            "activities": validate_activities(d.get("activities")),
+            "notes": text(d.get("notes"), f"days[{i}].notes", 1000, required=False),
             "createdAt": now,
             "updatedAt": now,
-        }
+        })
 
-        table.put_item(Item=item)
+    with table.batch_writer() as batch:
+        for it in items:
+            batch.put_item(Item=it)
 
-        return {
-            "statusCode": 201,
-            "headers": HEADERS,
-            "body": json.dumps({
-                "message": "Itinerario creado",
-                "tripId": trip_id,
-                "date": body["date"]
-            })
-        }
-
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
+    return 201, {
+        "message": f"Itinerario guardado ({len(items)} días)",
+        "tripId": trip_id,
+        "itinerary": sorted((public(i) for i in items), key=lambda x: x["date"]),
     }

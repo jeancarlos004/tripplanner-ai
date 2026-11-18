@@ -1,72 +1,45 @@
-"""Lambda: UpdateTrip — Actualiza un viaje del usuario en DynamoDB."""
-import json
-import os
+"""Lambda: UpdateTrip — actualiza datos de un viaje.  PUT /trips/{tripId}"""
 from datetime import datetime, timezone
-import boto3
 
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
-
-ALLOWED_FIELDS = ["destination", "origin", "startDate", "endDate", "travelers", "budget", "preferences", "status"]
-ALLOWED_STATUSES = ["PLANNING", "CONFIRMED", "COMPLETED"]
+from common import (api_handler, table, pk, get_trip_or_404, text, iso_date, int_range,
+                    money, one_of, date_range, clean_json, build_update, bad_request,
+                    TRIP_STATUSES, public)
 
 
-def handler(event, context):
-    try:
-        trip_id = event.get("pathParameters", {}).get("tripId")
-        user_id = event.get("requestContext", {}).get("authorizer", {}).get("userId", "default-user")
-        body = json.loads(event.get("body") or "{}")
+@api_handler
+def handler(user_id, body, path, **_):
+    trip_id = path.get("tripId")
+    current = get_trip_or_404(user_id, trip_id)
 
-        if not trip_id:
-            return _error(400, "tripId es requerido")
+    fields = {}
+    if "name" in body:        fields["name"] = text(body["name"], "name", 120)
+    if "origin" in body:      fields["origin"] = text(body["origin"], "origin", 100)
+    if "destination" in body: fields["destination"] = text(body["destination"], "destination", 100)
+    if "startDate" in body:   fields["startDate"] = iso_date(body["startDate"], "startDate")
+    if "endDate" in body:     fields["endDate"] = iso_date(body["endDate"], "endDate")
+    if "travelers" in body:   fields["travelers"] = int_range(body["travelers"], "travelers", 1, 20)
+    if "budget" in body:
+        fields["budget"] = money(body["budget"], "budget")
+        if fields["budget"] <= 0:
+            raise bad_request("El presupuesto debe ser mayor a 0")
+    if "preferences" in body:
+        p = body["preferences"]
+        fields["preferences"] = p if isinstance(p, str) else clean_json(p, "preferences", 4000)
+    if "status" in body:      fields["status"] = one_of(body["status"], "status", TRIP_STATUSES)
 
-        if "status" in body and body["status"] not in ALLOWED_STATUSES:
-            return _error(400, f"Estado inválido. Valores permitidos: {ALLOWED_STATUSES}")
+    if not fields:
+        raise bad_request("No hay campos para actualizar")
 
-        # Construir expresión de actualización dinámica
-        update_expr_parts = []
-        expr_values = {":updatedAt": datetime.now(timezone.utc).isoformat()}
-        expr_names = {}
+    date_range(fields.get("startDate", current["startDate"]), fields.get("endDate", current["endDate"]))
+    fields["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
-        for field in ALLOWED_FIELDS:
-            if field in body:
-                safe_name = f"#f_{field}"
-                expr_names[safe_name] = field
-                expr_values[f":{field}"] = str(body[field]) if field == "budget" else body[field]
-                update_expr_parts.append(f"{safe_name} = :{field}")
-
-        update_expr_parts.append("#updatedAt = :updatedAt")
-        expr_names["#updatedAt"] = "updatedAt"
-
-        table.update_item(
-            Key={"PK": f"USER#{user_id}", "SK": f"TRIP#{trip_id}"},
-            UpdateExpression="SET " + ", ".join(update_expr_parts),
-            ExpressionAttributeValues=expr_values,
-            ExpressionAttributeNames=expr_names,
-            ConditionExpression="attribute_exists(PK)"
-        )
-
-        return {
-            "statusCode": 200,
-            "headers": HEADERS,
-            "body": json.dumps({"message": "Viaje actualizado", "tripId": trip_id})
-        }
-
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return _error(404, "Viaje no encontrado")
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
-    }
+    expr, names, values = build_update(fields)
+    updated = table.update_item(
+        Key={"PK": pk(user_id), "SK": f"TRIP#{trip_id}"},
+        UpdateExpression=expr,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+        ConditionExpression="attribute_exists(PK)",
+        ReturnValues="ALL_NEW",
+    )["Attributes"]
+    return 200, {"message": "Viaje actualizado", "tripId": trip_id, "trip": public(updated)}

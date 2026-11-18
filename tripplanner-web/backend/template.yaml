@@ -1,217 +1,463 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: TripPlanner AI - Backend serverless (Lambda + API Gateway + DynamoDB)
+Description: >
+  TripPlanner AI - Backend serverless (Cognito + API Gateway + Lambda + DynamoDB)
+  y hosting del frontend (S3 privado + CloudFront).
+
+Parameters:
+  OrchestratorRuntimeArn:
+    Type: String
+    Description: ARN del runtime AgentCore del Orchestrator (Canal 2, HTTP streaming)
+    Default: arn:aws:bedrock-agentcore:us-east-2:750708765285:runtime/tripplannera2a_OrchestratorAgent-IPoKfoDSPk
+  DevOrigin:
+    Type: String
+    Description: Origen adicional permitido para desarrollo local (vacío para desactivar)
+    Default: http://localhost:5173
+  AutoConfirmUsers:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: Confirmar usuarios al registrarse (simplifica la demo)
+
+Conditions:
+  HasDevOrigin: !Not [!Equals [!Ref DevOrigin, '']]
 
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 30
+    Architectures: [arm64]
+    Timeout: 15
     MemorySize: 256
+    CodeUri: lambdas/
     Environment:
       Variables:
         TABLE_NAME: !Ref TripPlannerTable
-        REGION: us-east-2
+        ALLOWED_ORIGINS: !If
+          - HasDevOrigin
+          - !Sub "https://${FrontendDistribution.DomainName},${DevOrigin}"
+          - !Sub "https://${FrontendDistribution.DomainName}"
 
 Resources:
 
-  # ── DynamoDB ────────────────────────────────────────────────────────────────
+  # ════════════════════════════════════════════════════════════════════════
+  # DynamoDB — tabla única. Todo cuelga de PK = USER#<sub de Cognito>
+  # ════════════════════════════════════════════════════════════════════════
   TripPlannerTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: tripplanner-main
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: PK
-          AttributeType: S
-        - AttributeName: SK
-          AttributeType: S
-        - AttributeName: GSI1PK
-          AttributeType: S
-        - AttributeName: GSI1SK
-          AttributeType: S
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
       KeySchema:
-        - AttributeName: PK
-          KeyType: HASH
-        - AttributeName: SK
-          KeyType: RANGE
-      GlobalSecondaryIndexes:
-        - IndexName: GSI1
-          KeySchema:
-            - AttributeName: GSI1PK
-              KeyType: HASH
-            - AttributeName: GSI1SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
 
-  # ── IAM Role para Lambdas ────────────────────────────────────────────────────
-  LambdaExecutionRole:
+  # ════════════════════════════════════════════════════════════════════════
+  # Cognito — identidad de usuarios
+  # ════════════════════════════════════════════════════════════════════════
+  PreSignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-pre-signup
+      CodeUri: lambdas/auth/
+      Handler: pre_signup.handler
+      Environment:
+        Variables:
+          AUTO_CONFIRM: !Ref AutoConfirmUsers
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: tripplanner-users
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: false
+          RequireSymbols: false
+      Schema:
+        - { Name: email, AttributeDataType: String, Required: true, Mutable: true }
+        - { Name: name, AttributeDataType: String, Required: false, Mutable: true }
+      LambdaConfig:
+        PreSignUp: !GetAtt PreSignUpFunction.Arn
+
+  PreSignUpPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreSignUpFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: tripplanner-web
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # Identity Pool: entrega credenciales TEMPORALES al navegador para firmar
+  # (SigV4) la invocación al Orchestrator. Ninguna clave fija en el frontend.
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: tripplanner_identity
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  AuthenticatedRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: tripplanner-lambda-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            Principal: { Federated: cognito-identity.amazonaws.com }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
       Policies:
-        - PolicyName: DynamoDBAccess
+        - PolicyName: InvokeOrchestratorOnly
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
+                Action: bedrock-agentcore:InvokeAgentRuntime
                 Resource:
-                  - !GetAtt TripPlannerTable.Arn
-                  - !Sub "${TripPlannerTable.Arn}/index/*"
+                  - !Ref OrchestratorRuntimeArn
+                  - !Sub "${OrchestratorRuntimeArn}/*"
 
-  # ── API Gateway ─────────────────────────────────────────────────────────────
+  IdentityPoolRoles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt AuthenticatedRole.Arn
+
+  # ════════════════════════════════════════════════════════════════════════
+  # API Gateway — Canal 1 (REST). Autorizador Cognito + throttling
+  # ════════════════════════════════════════════════════════════════════════
   TripPlannerApi:
     Type: AWS::Serverless::Api
     Properties:
       Name: tripplanner-api
       StageName: prod
-      Cors:
-        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization'"
-        AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt UserPool.Arn
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: 20
+          ThrottlingBurstLimit: 40
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'https://${FrontendDistribution.DomainName}'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+          ResponseTemplates:
+            application/json: '{"error": $context.error.messageString}'
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'https://${FrontendDistribution.DomainName}'"
+          ResponseTemplates:
+            application/json: '{"error": "Error interno del servicio"}'
 
-  # ── Lambdas ──────────────────────────────────────────────────────────────────
+  # Preflight CORS sin autorización (el navegador no envía token en OPTIONS)
+  CorsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-cors
+      Handler: cors.handler
+      MemorySize: 128
+      Events:
+        OptTrips:        { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /trips, Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptTrip:         { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}", Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptItinerary:    { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/itinerary", Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptItineraryDay: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/itinerary/{date}", Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptTripRes:      { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations", Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptTripResOne:   { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations/{reservationId}", Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptReservations: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /reservations, Method: OPTIONS, Auth: { Authorizer: NONE } } }
+        OptProfile:      { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /profile, Method: OPTIONS, Auth: { Authorizer: NONE } } }
+            Auth: { Authorizer: NONE }
 
+  # ════════════════════════════════════════════════════════════════════════
+  # Lambdas de negocio — cada una con permisos mínimos sobre la tabla
+  # ════════════════════════════════════════════════════════════════════════
+
+  # ── Viajes ─────────────────────────────────────────────────────────────
   CreateTripFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-create-trip
-      CodeUri: lambdas/trips/
-      Handler: create_trip.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: trips.create_trip.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips
-            Method: POST
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /trips, Method: POST } }
 
   GetTripsFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-get-trips
-      CodeUri: lambdas/trips/
-      Handler: get_trips.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: trips.get_trips.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips
-            Method: GET
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /trips, Method: GET } }
+
+  GetTripFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-get-trip
+      Handler: trips.get_trip.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt TripPlannerTable.Arn
+      Events:
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}", Method: GET } }
 
   UpdateTripFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-update-trip
-      CodeUri: lambdas/trips/
-      Handler: update_trip.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: trips.update_trip.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}
-            Method: PUT
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}", Method: PUT } }
 
+  # ── Itinerarios ────────────────────────────────────────────────────────
   CreateItineraryFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-create-itinerary
-      CodeUri: lambdas/itineraries/
-      Handler: create_itinerary.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: itineraries.create_itinerary.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:BatchWriteItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}/itinerary
-            Method: POST
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/itinerary", Method: POST } }
+
+  GetItineraryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-get-itinerary
+      Handler: itineraries.get_itinerary.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt TripPlannerTable.Arn
+      Events:
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/itinerary", Method: GET } }
 
   UpdateItineraryFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-update-itinerary
-      CodeUri: lambdas/itineraries/
-      Handler: update_itinerary.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: itineraries.update_itinerary.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}/itinerary/{date}
-            Method: PUT
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/itinerary/{date}", Method: PUT } }
 
+  # ── Reservas ───────────────────────────────────────────────────────────
   CreateReservationFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-create-reservation
-      CodeUri: lambdas/reservations/
-      Handler: create_reservation.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: reservations.create_reservation.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}/reservations
-            Method: POST
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations", Method: POST } }
 
   GetReservationsFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-get-reservations
-      CodeUri: lambdas/reservations/
-      Handler: get_reservations.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: reservations.get_reservations.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}/reservations
-            Method: GET
+        ByTrip: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations", Method: GET } }
+        All:    { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /reservations, Method: GET } }
 
   UpdateReservationFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: tripplanner-update-reservation
-      CodeUri: lambdas/reservations/
-      Handler: update_reservation.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: reservations.update_reservation.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TripPlannerTable.Arn
       Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref TripPlannerApi
-            Path: /trips/{tripId}/reservations/{reservationId}
-            Method: PUT
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: "/trips/{tripId}/reservations/{reservationId}", Method: PUT } }
+
+  # ── Perfil y preferencias ──────────────────────────────────────────────
+  GetProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-get-profile
+      Handler: profile.get_profile.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt TripPlannerTable.Arn
+      Events:
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /profile, Method: GET } }
+
+  UpdateProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tripplanner-update-profile
+      Handler: profile.update_profile.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:UpdateItem]
+              Resource: !GetAtt TripPlannerTable.Arn
+      Events:
+        Api: { Type: Api, Properties: { RestApiId: !Ref TripPlannerApi, Path: /profile, Method: PUT } }
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Frontend — S3 privado servido por CloudFront (HTTPS) con OAC
+  # ════════════════════════════════════════════════════════════════════════
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tripplanner-frontend-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "tripplanner-oac-${AWS::AccountId}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: TripPlanner AI frontend
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3-frontend
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+        DefaultCacheBehavior:
+          TargetOriginId: s3-frontend
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # Managed-CachingOptimized
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
+        # SPA: rutas de React Router devuelven index.html
+        CustomErrorResponses:
+          - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html }
+          - { ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html }
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
 
 Outputs:
   ApiUrl:
-    Description: URL base de la API
-    Value: !Sub "https://${TripPlannerApi}.execute-api.us-east-2.amazonaws.com/prod"
+    Description: URL base de la API (Canal 1)
+    Value: !Sub "https://${TripPlannerApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
   TableName:
-    Description: Nombre de la tabla DynamoDB
     Value: !Ref TripPlannerTable
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  IdentityPoolId:
+    Value: !Ref IdentityPool
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendDistributionId:
+    Value: !Ref FrontendDistribution
+  FrontendUrl:
+    Description: URL pública del frontend
+    Value: !Sub "https://${FrontendDistribution.DomainName}"

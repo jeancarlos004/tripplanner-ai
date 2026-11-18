@@ -1,79 +1,47 @@
-"""Lambda: CreateTrip — Crea un viaje del usuario en DynamoDB."""
-import json
-import os
+"""Lambda: CreateTrip — crea un viaje del usuario autenticado.  POST /trips"""
 import uuid
 from datetime import datetime, timezone
-import boto3
-from boto3.dynamodb.conditions import Key
 
-TABLE_NAME = os.environ["TABLE_NAME"]
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("REGION", "us-east-2"))
-table = dynamodb.Table(TABLE_NAME)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-}
+from common import (api_handler, table, pk, require, text, iso_date, int_range,
+                    money, date_range, clean_json, public, bad_request)
 
 
-def handler(event, context):
-    try:
-        body = json.loads(event.get("body") or "{}")
-        user_id = event.get("requestContext", {}).get("authorizer", {}).get("userId", "default-user")
+@api_handler
+def handler(user_id, body, **_):
+    require(body, "origin", "destination", "startDate", "endDate", "travelers", "budget")
+    start = iso_date(body["startDate"], "startDate")
+    end = iso_date(body["endDate"], "endDate")
+    date_range(start, end)
 
-        # Validaciones
-        required = ["destination", "origin", "startDate", "endDate", "travelers", "budget"]
-        for field in required:
-            if field not in body:
-                return _error(400, f"Campo requerido: {field}")
+    budget = money(body["budget"], "budget")
+    if budget <= 0:
+        raise bad_request("El presupuesto debe ser mayor a 0")
 
-        if body["travelers"] < 1:
-            return _error(400, "El número de viajeros debe ser mayor a 0")
+    preferences = body.get("preferences", "")
+    if not isinstance(preferences, str):
+        preferences = clean_json(preferences, "preferences", 4000)
 
-        if body["budget"] <= 0:
-            return _error(400, "El presupuesto debe ser mayor a 0")
-
-        trip_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-
-        item = {
-            "PK": f"USER#{user_id}",
-            "SK": f"TRIP#{trip_id}",
-            "GSI1PK": user_id,
-            "GSI1SK": now,
-            "tripId": trip_id,
-            "userId": user_id,
-            "origin": body["origin"],
-            "destination": body["destination"],
-            "startDate": body["startDate"],
-            "endDate": body["endDate"],
-            "travelers": body["travelers"],
-            "budget": str(body["budget"]),
-            "preferences": body.get("preferences", ""),
-            "status": "PLANNING",
-            "createdAt": now,
-            "updatedAt": now,
-        }
-
-        table.put_item(Item=item)
-
-        return {
-            "statusCode": 201,
-            "headers": HEADERS,
-            "body": json.dumps({
-                "message": "Viaje creado exitosamente",
-                "tripId": trip_id,
-                "trip": item
-            }, default=str)
-        }
-
-    except Exception as e:
-        return _error(500, f"Error interno: {str(e)}")
-
-
-def _error(status, message):
-    return {
-        "statusCode": status,
-        "headers": HEADERS,
-        "body": json.dumps({"error": message})
+    trip_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    item = {
+        "PK": pk(user_id),
+        "SK": f"TRIP#{trip_id}",
+        "entity": "TRIP",
+        "tripId": trip_id,
+        "userId": user_id,
+        "name": text(body.get("name"), "name", 120, required=False)
+                or f"{body['origin']} → {body['destination']}",
+        "origin": text(body["origin"], "origin", 100),
+        "destination": text(body["destination"], "destination", 100),
+        "startDate": start,
+        "endDate": end,
+        "travelers": int_range(body["travelers"], "travelers", 1, 20),
+        "budget": budget,
+        "currency": text(body.get("currency"), "currency", 3, required=False).upper() or "COP",
+        "preferences": preferences,
+        "status": "PLANNING",
+        "createdAt": now,
+        "updatedAt": now,
     }
+    table.put_item(Item=item)
+    return 201, {"message": "Viaje creado exitosamente", "tripId": trip_id, "trip": public(item)}
