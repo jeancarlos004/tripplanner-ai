@@ -77,3 +77,13 @@
 }
 
 @media (max-width: 768px) { .trips-grid { grid-template-columns: 1fr; } }
+
+.trip-link { display: block; color: inherit; }
+.trip-link:hover .ac-trip { border-color: var(--border-glow); box-shadow: var(--shadow-glow); }
+.trip-link .ac-trip { height: 100%; transition: border-color .2s, box-shadow .2s; }
+.trip-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.trip-actions .btn { padding: 7px 12px; font-size: 12px; }
+.day-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.day-chip { background: var(--bg-1); color: var(--text-2); border: 1px dashed var(--border); border-radius: 99px; padding: 7px 14px; font-size: 12px; text-transform: capitalize; }
+.day-chip.has { border-style: solid; color: var(--text); }
+.day-chip.on { border-color: var(--cyan); color: var(--cyan); }

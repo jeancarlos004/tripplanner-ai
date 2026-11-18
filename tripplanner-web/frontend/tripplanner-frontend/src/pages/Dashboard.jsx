@@ -1,43 +1,44 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { API_URL } from '../config.js'
+import { api } from '../lib/api.js'
+import { useAuth } from '../lib/AuthContext.jsx'
+import { TripCard, ReservationList } from '../components/AgentCards.jsx'
 import './Dashboard.css'
 
 const QUICK = [
-  { to: '/chat',         icon: '💬', label: 'Asistente IA',    desc: 'Planifica con inteligencia artificial' },
-  { to: '/flights',      icon: '✈️', label: 'Buscar vuelos',   desc: 'Tarifas reales en tiempo real' },
-  { to: '/weather',      icon: '🌤️', label: 'Consultar clima', desc: 'Pronóstico de tu destino' },
-  { to: '/trips',        icon: '🗺️', label: 'Nuevo viaje',     desc: 'Organiza tu itinerario' },
+  { to: '/chat',         icon: '💬', label: 'Asistente IA',    desc: 'Planifica conversando con los agentes' },
+  { to: '/flights',      icon: '✈️', label: 'Buscar vuelos',   desc: 'Tarifas reales vía MCP' },
+  { to: '/weather',      icon: '🌤️', label: 'Consultar clima', desc: 'Pronóstico por destino y fechas' },
+  { to: '/trips',        icon: '🗺️', label: 'Mis viajes',      desc: 'Itinerarios y preferencias' },
 ]
 
 export default function Dashboard() {
-  const [trips, setTrips]   = useState([])
+  const { user } = useAuth()
+  const [trips, setTrips] = useState([])
+  const [reservations, setReservations] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch(`${API_URL}/trips`)
-      .then(r => r.json())
-      .then(d => setTrips(d.trips || []))
-      .catch(() => setTrips([]))
+    Promise.all([api.getTrips(), api.getReservations()])
+      .then(([t, r]) => { setTrips(t.trips || []); setReservations(r.reservations || []) })
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
 
-  const upcoming   = trips.filter(t => t.status !== 'COMPLETED').slice(0, 3)
-  const completed  = trips.filter(t => t.status === 'COMPLETED').length
+  const today = new Date().toISOString().slice(0, 10)
+  const upcoming = trips
+    .filter(t => t.endDate >= today && !['COMPLETED', 'CANCELLED'].includes(t.status))
+    .sort((a, b) => (a.startDate > b.startDate ? 1 : -1))
+  const recent = reservations.slice(0, 4)
 
   return (
     <div className="dashboard">
-
-      {/* Hero */}
       <div className="dash-hero">
         <div className="hero-plane">✈️</div>
         <div className="dash-hero-content">
-          <h1 className="dash-title">
-            Bienvenido a <span>TripPlanner AI</span>
-          </h1>
-          <p className="dash-subtitle">
-            Tu asistente inteligente para planificar, organizar y gestionar viajes ✨
-          </p>
+          <h1 className="dash-title">Hola{user?.name ? `, ${user.name}` : ''} 👋 <span>TripPlanner AI</span></h1>
+          <p className="dash-subtitle">Tu asistente inteligente para planificar, organizar y gestionar viajes ✨</p>
           <div className="dash-hero-actions">
             <Link to="/chat" className="btn btn-primary">💬 Hablar con el asistente</Link>
             <Link to="/trips" className="btn btn-ghost">+ Crear viaje</Link>
@@ -45,13 +46,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Stats */}
+      {error && <div className="flight-error">⚠️ {error}</div>}
+
       <div className="stats-grid stagger">
         {[
-          { icon: '🗺️', value: trips.length,     label: 'Viajes totales'    },
-          { icon: '📅', value: upcoming.length,  label: 'Próximos viajes'   },
-          { icon: '✅', value: completed,         label: 'Completados'       },
-          { icon: '🤖', value: 'IA',              label: 'Asistente activo'  },
+          { icon: '🗺️', value: trips.length,        label: 'Viajes totales' },
+          { icon: '📅', value: upcoming.length,     label: 'Próximos viajes' },
+          { icon: '📋', value: reservations.length, label: 'Reservas' },
+          { icon: '🤖', value: '3',                 label: 'Agentes activos' },
         ].map((s, i) => (
           <div key={i} className="stat-card animate-fade-up">
             <div className="stat-icon">{s.icon}</div>
@@ -63,7 +65,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Quick actions */}
       <div className="section-title">Accesos rápidos</div>
       <div className="quick-actions stagger">
         {QUICK.map(({ to, icon, label, desc }) => (
@@ -76,29 +77,28 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Upcoming trips */}
       <div className="section-title">Próximos viajes</div>
       {loading ? (
-        <div className="loading"><div className="spinner" /> Cargando viajes...</div>
+        <div className="loading"><div className="spinner" /> Cargando…</div>
       ) : upcoming.length === 0 ? (
         <div className="empty-state">
           <div className="icon">🗺️</div>
           <p>No tienes viajes próximos aún</p>
-          <Link to="/trips" className="btn btn-primary">Crear primer viaje</Link>
+          <Link to="/chat" className="btn btn-primary">Planear con el asistente</Link>
         </div>
       ) : (
-        <div className="trips-preview stagger">
-          {upcoming.map(trip => (
-            <Link to="/trips" key={trip.tripId} className="trip-preview-card animate-fade-up">
-              <div className="trip-dest">{trip.destination}</div>
-              <div className="trip-dates">{trip.startDate} → {trip.endDate}</div>
-              <div className="trip-meta">
-                <span>👥 {trip.travelers} viajeros</span>
-                <span className={`badge badge-${trip.status?.toLowerCase()}`}>{trip.status}</span>
-              </div>
-            </Link>
+        <div className="ac-trips stagger">
+          {upcoming.slice(0, 3).map(t => (
+            <Link key={t.tripId} to={`/trips/${t.tripId}`} className="trip-link animate-fade-up"><TripCard trip={t} compact /></Link>
           ))}
         </div>
+      )}
+
+      {!loading && (
+        <>
+          <div className="section-title" style={{ marginTop: 28 }}>Reservas recientes</div>
+          <ReservationList reservations={recent} />
+        </>
       )}
     </div>
   )

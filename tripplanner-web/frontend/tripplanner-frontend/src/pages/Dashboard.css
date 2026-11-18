@@ -196,3 +196,6 @@
   .dash-hero { padding: 24px; }
   .dash-title { font-size: 22px; }
 }
+
+.trip-link { display: block; color: inherit; }
+.trip-link:hover .ac-trip { border-color: var(--border-glow); box-shadow: var(--shadow-glow); }

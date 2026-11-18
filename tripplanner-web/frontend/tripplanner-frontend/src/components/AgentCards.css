@@ -1,0 +1,86 @@
+/* ── Agent-Driven UI ─────────────────────────────────────────── */
+.ac-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-top: 12px; animation: fadeUp .4s var(--ease) both; }
+.ac-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.ac-title { font-weight: 700; font-size: 15px; }
+.ac-sub { color: var(--text-2); font-size: 13px; }
+.ac-link { font-size: 13px; font-weight: 600; }
+.ac-foot { margin-top: 10px; color: var(--text-3); font-size: 12px; }
+.ac-empty { color: var(--text-3); font-size: 14px; padding: 14px; text-align: center; border: 1px dashed var(--border); border-radius: 12px; margin-top: 12px; }
+
+.tag-green { background: rgba(16,185,129,.15) !important; color: #34d399 !important; }
+.tag-cyan  { background: rgba(6,182,212,.15) !important;  color: #22d3ee !important; }
+.tag-amber { background: rgba(245,158,11,.15) !important; color: #fbbf24 !important; }
+.badge-cancelled { background: rgba(244,63,94,.12); color: #fb7185; border: 1px solid rgba(244,63,94,.25); }
+
+/* Vuelos */
+.ac-flights { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.ac-flight { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.ac-flight.best { border-color: rgba(16,185,129,.5); box-shadow: 0 0 18px rgba(16,185,129,.12); }
+.ac-flight-tags { display: flex; gap: 6px; min-height: 22px; flex-wrap: wrap; }
+.ac-airline { font-weight: 700; }
+.ac-airline span { color: var(--text-3); font-weight: 500; font-size: 13px; }
+.ac-times { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.ac-times b { font-size: 18px; display: block; }
+.ac-times small { color: var(--text-3); font-size: 11px; }
+.ac-line { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--text-3); }
+.ac-line i { width: 100%; height: 1px; background: var(--border); margin: 3px 0; }
+.ac-flight-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.ac-price { font-size: 18px; font-weight: 800; background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ac-btn { padding: 7px 12px; font-size: 12px; }
+
+/* Clima */
+.ac-weather { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.ac-day { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; }
+.ac-day-date { font-size: 12px; color: var(--text-2); text-transform: capitalize; }
+.ac-day-icon { font-size: 30px; margin: 6px 0; }
+.ac-day-temp { font-size: 14px; color: var(--text-2); }
+.ac-day-temp b { font-size: 20px; color: var(--text); }
+.ac-day-cond { font-size: 12px; margin: 4px 0; }
+.ac-day-meta { display: flex; justify-content: center; gap: 8px; font-size: 11px; color: var(--text-3); flex-wrap: wrap; }
+
+/* Viajes */
+.ac-trips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.ac-trip { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.ac-trip-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.ac-trip-route { font-size: 15px; }
+.ac-trip-route b { font-size: 17px; }
+.ac-trip-dates { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.ac-trip-stats { display: flex; gap: 14px; margin-top: 10px; font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
+.ac-trip-prefs { margin-top: 8px; font-size: 12px; color: var(--text-3); }
+
+/* Agenda */
+.ac-agenda { display: flex; flex-direction: column; gap: 12px; }
+.ac-agenda-day { border-left: 3px solid var(--cyan); padding-left: 14px; }
+.ac-agenda-label { display: flex; gap: 10px; align-items: baseline; text-transform: capitalize; font-weight: 600; margin-bottom: 6px; }
+.ac-agenda-n { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--cyan); }
+.ac-agenda-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.ac-agenda-items li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; }
+.ac-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.ac-act-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ac-act-desc { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.ac-act-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-3); margin-top: 2px; flex-wrap: wrap; }
+.ac-agenda-notes { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+
+/* Reservas */
+.ac-res-list { display: flex; flex-direction: column; gap: 10px; }
+.ac-res { display: flex; gap: 12px; align-items: flex-start; background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px; border-left: 3px solid var(--cyan); }
+.ac-res.type-HOTEL { border-left-color: var(--violet); }
+.ac-res.type-ACTIVITY { border-left-color: var(--amber); }
+.ac-res-icon { font-size: 22px; }
+.ac-res-body { flex: 1; min-width: 0; }
+.ac-res-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ac-res-title { font-weight: 600; }
+.ac-res-details { font-size: 13px; color: var(--text-2); margin-top: 4px; overflow-wrap: anywhere; }
+.ac-res-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-3); margin-top: 6px; flex-wrap: wrap; }
+.ac-res-actions { display: flex; flex-direction: column; gap: 6px; }
+
+/* Preferencias */
+.ac-prefs { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.ac-prefs div { background: var(--bg-1); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+.ac-prefs small { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.ac-prefs span { font-size: 14px; }
+
+@media (max-width: 600px) {
+  .ac-res { flex-wrap: wrap; }
+  .ac-res-actions { flex-direction: row; width: 100%; }
+}

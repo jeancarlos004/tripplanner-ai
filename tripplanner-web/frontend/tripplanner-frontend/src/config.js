@@ -1,11 +1,22 @@
-// Configuración central de la aplicación
-// Canal 1: API REST para operaciones de negocio
-export const API_URL = 'https://azkojnthof.execute-api.us-east-2.amazonaws.com/prod'
+// Configuración central (se inyecta en build desde .env.production / .env.local).
+// No contiene secretos: solo identificadores públicos. NINGUNA clave AWS en el navegador.
 
-// Canal 2: AgentCore para streaming agéntico
-export const AGENTCORE_URL = 'https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A750708765285%3Aruntime%2Ftripplannera2a_OrchestratorAgent-IPoKfoDSPk/invocations'
+const env = import.meta.env
 
-export const AWS_REGION = 'us-east-2'
+export const AWS_REGION = env.VITE_AWS_REGION || 'us-east-2'
 
-// Usuario por defecto (en producción vendría de Cognito)
-export const DEFAULT_USER_ID = 'default-user'
+// Canal 1: API REST (API Gateway → Lambda → DynamoDB), protegida con Cognito
+export const API_URL = (env.VITE_API_URL || '').replace(/\/$/, '')
+
+// Canal 2: HTTP streaming directo a AgentCore (sin API Gateway)
+const ORCHESTRATOR_ARN = env.VITE_ORCHESTRATOR_ARN || ''
+export const AGENTCORE_URL = ORCHESTRATOR_ARN
+  ? `https://bedrock-agentcore.${AWS_REGION}.amazonaws.com/runtimes/${encodeURIComponent(ORCHESTRATOR_ARN)}/invocations`
+  : ''
+
+// Cognito
+export const USER_POOL_ID     = env.VITE_USER_POOL_ID || ''
+export const USER_POOL_CLIENT = env.VITE_USER_POOL_CLIENT_ID || ''
+export const IDENTITY_POOL_ID = env.VITE_IDENTITY_POOL_ID || ''
+
+export const CONFIG_OK = Boolean(API_URL && ORCHESTRATOR_ARN && USER_POOL_ID && USER_POOL_CLIENT && IDENTITY_POOL_ID)

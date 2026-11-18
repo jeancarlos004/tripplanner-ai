@@ -142,6 +142,9 @@
 
 .user-name  { font-size: 13px; font-weight: 600; color: var(--text); }
 .user-role  { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.user-name  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logout-btn { background: none; color: var(--text-3); font-size: 11px; padding: 0; margin-top: 2px; }
+.logout-btn:hover { color: var(--rose); }
 
 /* ── Main content ─────────────────────────────────────── */
 .main-content {
@@ -161,6 +164,8 @@
 @media (max-width: 768px) {
   .sidebar { width: 60px; }
   .nav-label, .logo-text, .user-name, .user-role { display: none; }
+  .logout-btn { font-size: 0; }
+  .logout-btn::before { content: '⏻'; font-size: 14px; }
   .nav-item.active::after { display: none; }
   .main-content { margin-left: 60px; padding: 16px; }
 }

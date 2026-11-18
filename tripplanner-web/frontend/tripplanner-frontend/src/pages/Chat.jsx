@@ -1,105 +1,87 @@
 import { useState, useRef, useEffect } from 'react'
-import { AGENTCORE_URL, AWS_REGION } from '../config.js'
+import { streamAgent, getChatSessionId } from '../lib/agent.js'
+import { renderMarkdown } from '../lib/format.js'
+import { AgentUI } from '../components/AgentCards.jsx'
+import { useAuth } from '../lib/AuthContext.jsx'
 import './Chat.css'
 
 const SUGGESTED = [
-  'Quiero organizar unas vacaciones de 4 días en Cartagena saliendo desde Bogotá con 3 personas y presupuesto de 5 millones',
-  'Busca vuelos de BOG a MAD para el 2027-03-15 y dime el clima en Madrid',
-  'Busca vuelos de BAQ a MIA para el 2027-02-20',
+  'Quiero organizar unas vacaciones de cuatro días en Cartagena. Salgo desde Bogotá, viajo con dos personas más y tengo un presupuesto de 5 millones de pesos. Quiero conocer el clima, encontrar vuelos y organizar algunas actividades turísticas.',
+  'Muéstrame mis viajes guardados',
+  '¿Qué reservas tengo registradas?',
 ]
 
+const HISTORY_KEY = 'tripplanner.chatHistory'
+
+function welcome(name) {
+  return { role: 'assistant', text: `¡Hola${name ? `, ${name}` : ''}! Soy **TripPlanner AI** 🌍. Puedo buscar vuelos, consultar el clima, crear tu viaje con itinerario y registrar reservas. ¿A dónde quieres viajar?`, ui: [] }
+}
+
+function loadHistory(sessionId) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || 'null')
+    if (saved?.sessionId === sessionId && Array.isArray(saved.messages)) return saved.messages
+  } catch { /* noop */ }
+  return null
+}
+
 export default function Chat() {
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: '¡Hola! Soy TripPlanner AI 🌍 Puedo ayudarte a buscar vuelos, consultar el clima, planificar viajes y crear itinerarios. ¿A dónde quieres viajar?' }
-  ])
+  const { user } = useAuth()
+  const [sessionId, setSessionId] = useState(() => getChatSessionId())
+  const [messages, setMessages] = useState(() => loadHistory(getChatSessionId()) || [welcome(user?.name)])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [sessionId] = useState(() => crypto.randomUUID())
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const abortRef = useRef(null)
 
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages])
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (loading) return
+    try { sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ sessionId, messages })) } catch { /* noop */ }
+  }, [messages, loading, sessionId])
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const patchLast = fn => setMessages(prev => {
+    const copy = [...prev]
+    copy[copy.length - 1] = fn({ ...copy[copy.length - 1] })
+    return copy
+  })
 
   async function sendMessage(text) {
-    const prompt = text || input.trim()
+    const prompt = (text ?? input).trim()
     if (!prompt || loading) return
-
     setInput('')
-    setMessages(prev => [...prev, { role: 'user', text: prompt }])
     setLoading(true)
+    setMessages(prev => [...prev, { role: 'user', text: prompt }, { role: 'assistant', text: '', ui: [], steps: [], streaming: true }])
 
-    // Agregar mensaje del asistente vacío que iremos llenando
-    setMessages(prev => [...prev, { role: 'assistant', text: '', streaming: true }])
-
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
-      const payload = {
-        jsonrpc: '2.0',
-        id: crypto.randomUUID(),
-        method: 'message/send',
-        params: {
-          message: {
-            messageId: crypto.randomUUID(),
-            role: 'user',
-            parts: [{ kind: 'text', text: prompt }],
-          },
-          configuration: { acceptedOutputModes: ['text'] },
+      await streamAgent(prompt, {
+        sessionId,
+        signal: controller.signal,
+        onEvent: evt => {
+          if (evt.type === 'text') patchLast(m => ({ ...m, text: m.text + evt.delta }))
+          else if (evt.type === 'status') patchLast(m => ({ ...m, steps: [...(m.steps || []), evt.message] }))
+          else if (evt.type === 'ui') patchLast(m => ({ ...m, ui: [...(m.ui || []), { component: evt.component, data: evt.data }] }))
+          else if (evt.type === 'error') patchLast(m => ({ ...m, error: evt.message }))
         },
-      }
-
-      const { AwsClient } = await import('aws4fetch')
-      const aws = new AwsClient({
-        accessKeyId: import.meta.env.VITE_AWS_ACCESS_KEY_ID,
-        secretAccessKey: import.meta.env.VITE_AWS_SECRET_ACCESS_KEY,
-        region: AWS_REGION,
-        service: 'bedrock-agentcore',
-      })
-
-      const response = await aws.fetch(AGENTCORE_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
-        },
-        body: JSON.stringify(payload),
-      })
-
-      const data = await response.json()
-      let responseText = ''
-
-      // Extraer texto de la respuesta A2A
-      const result = data?.result || {}
-      for (const artifact of result.artifacts || []) {
-        for (const part of artifact.parts || []) {
-          if (part.kind === 'text') responseText += part.text
-        }
-      }
-      for (const part of result.parts || []) {
-        if (part.kind === 'text') responseText += part.text
-      }
-
-      // Limpiar thinking tags
-      responseText = responseText.replace(/<thinking>[\s\S]*?<\/thinking>/g, '').trim()
-
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', text: responseText || 'No se pudo obtener respuesta.' }
-        return updated
       })
     } catch (err) {
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = {
-          role: 'assistant',
-          text: `Error al conectar con el asistente: ${err.message}`
-        }
-        return updated
-      })
+      if (err.name !== 'AbortError') patchLast(m => ({ ...m, error: err.message }))
     } finally {
+      patchLast(m => ({ ...m, streaming: false, text: m.text || (m.ui?.length || m.error ? m.text : 'No se obtuvo respuesta.') }))
       setLoading(false)
       inputRef.current?.focus()
     }
+  }
+
+  function newConversation() {
+    abortRef.current?.abort()
+    const id = getChatSessionId(true)
+    setSessionId(id)
+    setMessages([welcome(user?.name)])
   }
 
   function handleKey(e) {
@@ -110,47 +92,51 @@ export default function Chat() {
     <div className="chat-page">
       <div className="chat-header">
         <h1 className="chat-title">💬 Asistente TripPlanner AI</h1>
-        <div className="chat-status"><span className="status-dot" />En línea</div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="chat-status"><span className="status-dot" />{loading ? 'Procesando…' : 'En línea'}</div>
+          <button className="btn btn-ghost" style={{ padding: '7px 12px', fontSize: 12 }} onClick={newConversation} type="button">＋ Nueva conversación</button>
+        </div>
       </div>
 
       <div className="chat-container">
-        <div className="messages-area">
+        <div className="messages-area" aria-live="polite">
           {messages.map((msg, i) => (
             <div key={i} className={`message message-${msg.role}`}>
-              {msg.role === 'assistant' && (
-                <div className="message-avatar">🤖</div>
-              )}
-              <div className="message-bubble">
-                {msg.streaming && !msg.text ? (
-                  <div className="typing-indicator">
-                    <span /><span /><span />
-                  </div>
-                ) : (
-                  <div className="message-text" dangerouslySetInnerHTML={{
-                    __html: formatMessage(msg.text)
-                  }} />
+              {msg.role === 'assistant' && <div className="message-avatar">🤖</div>}
+              <div className={`message-bubble ${msg.ui?.length ? 'has-ui' : ''}`}>
+                {msg.steps?.length > 0 && (
+                  <ul className="agent-steps">
+                    {msg.steps.map((s, j) => (
+                      <li key={j} className={msg.streaming && j === msg.steps.length - 1 ? 'active' : 'done'}>
+                        <span className="step-dot" />{s}
+                      </li>
+                    ))}
+                  </ul>
                 )}
+                {msg.streaming && !msg.text && !msg.steps?.length && (
+                  <div className="typing-indicator"><span /><span /><span /></div>
+                )}
+                {msg.role === 'user'
+                  ? <div className="message-text">{msg.text}</div>
+                  : msg.text && <div className="message-text md" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />}
+                {msg.ui?.map((u, j) => <AgentUI key={j} component={u.component} data={u.data} />)}
+                {msg.streaming && msg.text && <span className="stream-caret" />}
+                {msg.error && <div className="chat-error">⚠️ {msg.error}</div>}
               </div>
-              {msg.role === 'user' && (
-                <div className="message-avatar user-avatar-chat">U</div>
-              )}
+              {msg.role === 'user' && <div className="message-avatar user-avatar-chat">{(user?.name || 'U').charAt(0).toUpperCase()}</div>}
             </div>
           ))}
           <div ref={bottomRef} />
         </div>
 
-        {/* Sugerencias */}
         {messages.length <= 1 && (
           <div className="suggestions">
             {SUGGESTED.map((s, i) => (
-              <button key={i} className="suggestion-btn" onClick={() => sendMessage(s)}>
-                {s}
-              </button>
+              <button key={i} className="suggestion-btn" onClick={() => sendMessage(s)} type="button">{s}</button>
             ))}
           </div>
         )}
 
-        {/* Input */}
         <div className="chat-input-area">
           <textarea
             ref={inputRef}
@@ -158,29 +144,17 @@ export default function Chat() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Escribe tu mensaje... (Enter para enviar)"
+            placeholder="Escribe tu mensaje… (Enter para enviar, Shift+Enter nueva línea)"
             rows={2}
+            maxLength={4000}
             disabled={loading}
+            aria-label="Mensaje para el asistente"
           />
-          <button
-            className="btn btn-primary send-btn"
-            onClick={() => sendMessage()}
-            disabled={loading || !input.trim()}
-          >
+          <button className="btn btn-primary send-btn" onClick={() => sendMessage()} disabled={loading || !input.trim()} type="button" aria-label="Enviar">
             {loading ? <div className="spinner" /> : '➤'}
           </button>
         </div>
       </div>
     </div>
   )
-}
-
-function formatMessage(text) {
-  if (!text) return ''
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br/>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
 }

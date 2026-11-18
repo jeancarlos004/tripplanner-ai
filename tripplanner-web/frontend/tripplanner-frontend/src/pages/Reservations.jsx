@@ -1,163 +1,155 @@
-import { useState, useEffect } from 'react'
-import { API_URL } from '../config.js'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { api } from '../lib/api.js'
+import { ReservationList, StatusBadge } from '../components/AgentCards.jsx'
+import { RES_STATUS, RES_TYPE, detailsText } from '../lib/format.js'
 import './Reservations.css'
 
-const TYPE_ICONS  = { FLIGHT: '✈️', HOTEL: '🏨', ACTIVITY: '🎭' }
+const EMPTY = { type: 'FLIGHT', title: '', details: '', price: '', date: '' }
 
 export default function Reservations() {
-  const [trips, setTrips]           = useState([])
-  const [selectedTrip, setSelectedTrip] = useState('')
+  const [params, setParams] = useSearchParams()
+  const [trips, setTrips] = useState([])
   const [reservations, setReservations] = useState([])
-  const [loading, setLoading]       = useState(false)
-  const [showForm, setShowForm]     = useState(false)
-  const [form, setForm]             = useState({ type: 'FLIGHT', details: '', price: '' })
-  const [saving, setSaving]         = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filterTrip, setFilterTrip] = useState(params.get('trip') || '')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [form, setForm] = useState(null)       // null = cerrado; {…, tripId, reservationId?}
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    fetch(`${API_URL}/trips`).then(r => r.json()).then(d => {
-      const t = d.trips || []
-      setTrips(t)
-      if (t.length > 0) setSelectedTrip(t[0].tripId)
-    })
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try {
+      const [t, r] = await Promise.all([api.getTrips(), api.getReservations()])
+      setTrips(t.trips || []); setReservations(r.reservations || [])
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
   }, [])
+  useEffect(() => { load() }, [load])
+  useEffect(() => { if (params.get('trip') && trips.length && !form) openCreate(params.get('trip')) }, [trips]) // eslint-disable-line
 
-  useEffect(() => { if (selectedTrip) loadReservations() }, [selectedTrip])
+  const visible = useMemo(() => reservations.filter(r =>
+    (!filterTrip || r.tripId === filterTrip) && (!filterStatus || r.status === filterStatus)), [reservations, filterTrip, filterStatus])
 
-  async function loadReservations() {
-    if (!selectedTrip) return
-    setLoading(true)
+  const counts = useMemo(() => Object.fromEntries(Object.keys(RES_STATUS).map(s => [s, reservations.filter(r => r.status === s).length])), [reservations])
+
+  function openCreate(tripId = filterTrip || trips[0]?.tripId) {
+    setForm({ ...EMPTY, tripId: tripId || '' })
+  }
+
+  function openEdit(r) {
+    setForm({ reservationId: r.reservationId, tripId: r.tripId, type: r.type, title: r.title || '',
+      details: detailsText(r.details), price: r.price ?? '', date: r.date || '' })
+  }
+
+  async function save(e) {
+    e.preventDefault(); setSaving(true); setError('')
+    const body = { type: form.type, title: form.title, details: form.details, price: Number(form.price || 0) }
+    if (form.date) body.date = form.date
     try {
-      const r = await fetch(`${API_URL}/trips/${selectedTrip}/reservations`)
-      const d = await r.json()
-      setReservations(d.reservations || [])
-    } finally { setLoading(false) }
+      if (form.reservationId) await api.updateReservation(form.tripId, form.reservationId, body)
+      else await api.createReservation(form.tripId, body)
+      setForm(null)
+      if (params.get('trip')) setParams({})
+      await load()
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
-  async function createReservation(e) {
-    e.preventDefault(); setSaving(true)
-    try {
-      const r = await fetch(`${API_URL}/trips/${selectedTrip}/reservations`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: form.type, details: form.details, price: parseFloat(form.price || 0) })
-      })
-      if (r.ok) {
-        setShowForm(false)
-        setForm({ type: 'FLIGHT', details: '', price: '' })
-        await loadReservations()
-      }
-    } finally { setSaving(false) }
+  async function setStatus(r, status) {
+    setError('')
+    try { await api.updateReservation(r.tripId, r.reservationId, { status }); await load() } catch (e) { setError(e.message) }
   }
-
-  async function updateStatus(res, status) {
-    await fetch(`${API_URL}/trips/${selectedTrip}/reservations/${res.reservationId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    })
-    await loadReservations()
-  }
-
-  const currentTrip = trips.find(t => t.tripId === selectedTrip)
 
   return (
     <div className="reservations-page">
       <div className="res-header-row">
-        <h1 className="page-title" style={{marginBottom:0}}>📋 Gestión de Reservas</h1>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)} disabled={!selectedTrip}>
-          {showForm ? '✕ Cancelar' : '+ Nueva reserva'}
+        <h1 className="page-title" style={{ marginBottom: 0 }}>📋 Gestión de Reservas</h1>
+        <button className="btn btn-primary" onClick={() => (form ? setForm(null) : openCreate())} disabled={!trips.length} type="button">
+          {form ? '✕ Cancelar' : '+ Nueva reserva'}
         </button>
       </div>
 
-      {trips.length > 0 && (
-        <div className="trip-selector-card animate-fade-in">
-          <label>Viaje asociado</label>
-          <select value={selectedTrip} onChange={e => setSelectedTrip(e.target.value)}>
-            {trips.map(t => (
-              <option key={t.tripId} value={t.tripId}>
-                {t.origin} → {t.destination} · {t.startDate}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      <div className="res-legend">
+        {Object.entries(RES_STATUS).map(([k, v]) => (
+          <button key={k} type="button" className={`res-legend-item ${filterStatus === k ? 'on' : ''}`} onClick={() => setFilterStatus(filterStatus === k ? '' : k)}>
+            <StatusBadge status={k} /> <b>{counts[k] || 0}</b> <small>{v.hint}</small>
+          </button>
+        ))}
+      </div>
 
-      {showForm && selectedTrip && (
+      {error && <div className="flight-error">⚠️ {error}</div>}
+
+      {form && (
         <div className="res-create-form">
-          <h3>📋 Nueva reserva {currentTrip ? `· ${currentTrip.destination}` : ''}</h3>
-          <form onSubmit={createReservation}>
+          <h3>{form.reservationId ? '✏️ Editar reserva' : '📋 Nueva reserva'}</h3>
+          <form onSubmit={save}>
             <div className="grid-2">
               <div className="form-group">
-                <label>Tipo</label>
-                <select value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
-                  <option value="FLIGHT">✈️ Vuelo</option>
-                  <option value="HOTEL">🏨 Hotel</option>
-                  <option value="ACTIVITY">🎭 Actividad</option>
+                <label>Viaje asociado</label>
+                <select value={form.tripId} onChange={e => setForm({ ...form, tripId: e.target.value })} disabled={!!form.reservationId} required>
+                  {trips.map(t => <option key={t.tripId} value={t.tripId}>{t.origin} → {t.destination} · {t.startDate}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label>Precio (COP)</label>
-                <input type="number" placeholder="0" value={form.price}
-                  onChange={e => setForm({...form, price: e.target.value})} />
+                <label>Tipo</label>
+                <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                  {Object.entries(RES_TYPE).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Título</label>
+                <input value={form.title} maxLength={200} onChange={e => setForm({ ...form, title: e.target.value })}
+                  placeholder="Avianca BOG → CTG · Hotel Caribe · Tour Islas del Rosario" required />
+              </div>
+              <div className="form-group">
+                <label>Fecha</label>
+                <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Precio total</label>
+                <input type="number" min="0" placeholder="0" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} />
               </div>
             </div>
             <div className="form-group">
               <label>Detalles</label>
-              <textarea rows={3} placeholder="Describe los detalles de la reserva..." value={form.details}
-                onChange={e => setForm({...form, details: e.target.value})} required />
+              <textarea rows={3} maxLength={2000} placeholder="Horarios, número de personas, ubicación… (no incluyas datos de pago)"
+                value={form.details} onChange={e => setForm({ ...form, details: e.target.value })} required />
             </div>
-            <div className="res-status-info">
-              🔒 Las reservas nuevas se crean con estado <span className="badge badge-simulada" style={{marginLeft:4}}>SIMULADA</span>
-            </div>
+            {!form.reservationId && (
+              <div className="res-status-info">🔒 Las reservas nuevas se registran como <StatusBadge status="SIMULADA" />: no se contacta a ningún proveedor ni se solicitan datos de pago.</div>
+            )}
             <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? <><div className="spinner" style={{width:16,height:16}} /> Guardando...</> : '💾 Registrar reserva'}
+              {saving ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Guardando…</> : '💾 Guardar reserva'}
             </button>
           </form>
         </div>
       )}
 
+      {trips.length > 0 && (
+        <div className="trip-selector-card animate-fade-in">
+          <label>Filtrar por viaje</label>
+          <select value={filterTrip} onChange={e => setFilterTrip(e.target.value)}>
+            <option value="">Todos los viajes</option>
+            {trips.map(t => <option key={t.tripId} value={t.tripId}>{t.origin} → {t.destination} · {t.startDate}</option>)}
+          </select>
+        </div>
+      )}
+
       {loading ? (
-        <div className="loading"><div className="spinner" /> Cargando reservas...</div>
-      ) : !selectedTrip ? (
-        <div className="empty-state"><div className="icon">📋</div><p>Selecciona un viaje</p></div>
-      ) : reservations.length === 0 ? (
-        <div className="empty-state">
-          <div className="icon">📋</div>
-          <p>No hay reservas para este viaje</p>
-          <button className="btn btn-primary" onClick={() => setShowForm(true)}>Crear primera reserva</button>
-        </div>
+        <div className="loading"><div className="spinner" /> Cargando reservas…</div>
+      ) : !trips.length ? (
+        <div className="empty-state"><div className="icon">🗺️</div><p>Primero crea un viaje para asociarle reservas.</p></div>
       ) : (
-        <div className="reservations-list stagger">
-          {reservations.map((res, i) => (
-            <div key={res.reservationId}
-              className={`reservation-card type-${res.type} animate-fade-up`}
-              style={{animationDelay:`${i*0.07}s`}}
-            >
-              <div className="res-type-icon">{TYPE_ICONS[res.type] || '📋'}</div>
-              <div className="res-body">
-                <div className="res-top">
-                  <span className="res-type-label">{res.type}</span>
-                  <span className={`badge badge-${res.status?.toLowerCase()}`}>{res.status}</span>
-                </div>
-                <div className="res-details">{res.details}</div>
-                <div className="res-meta">
-                  <span className="res-price">💰 ${parseFloat(res.price||0).toLocaleString()}</span>
-                  <span>📅 {res.createdAt?.slice(0,10)}</span>
-                </div>
-              </div>
-              <div className="res-actions">
-                {res.status === 'SIMULADA' && (
-                  <button className="btn btn-secondary" onClick={() => updateStatus(res,'PENDIENTE')}>
-                    Pendiente →
-                  </button>
-                )}
-                {res.status === 'PENDIENTE' && (
-                  <button className="btn btn-secondary" onClick={() => updateStatus(res,'CONFIRMADA')}>
-                    ✅ Confirmar
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        <ReservationList
+          reservations={visible}
+          renderActions={r => (
+            <>
+              <button className="btn btn-secondary" onClick={() => openEdit(r)} type="button">✏️ Editar</button>
+              {r.status === 'SIMULADA' && <button className="btn btn-secondary" onClick={() => setStatus(r, 'PENDIENTE')} type="button">Marcar pendiente</button>}
+              {r.status === 'PENDIENTE' && <button className="btn btn-ghost" onClick={() => setStatus(r, 'SIMULADA')} type="button">Volver a simulada</button>}
+            </>
+          )}
+        />
       )}
     </div>
   )

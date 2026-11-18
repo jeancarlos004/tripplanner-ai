@@ -63,3 +63,10 @@
 
 .res-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
 .res-actions .btn { font-size: 12px; padding: 7px 14px; white-space: nowrap; }
+
+.res-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 18px 0; }
+.res-legend-item { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text); text-align: left; }
+.res-legend-item.on { border-color: var(--cyan); box-shadow: var(--shadow-glow); }
+.res-legend-item b { font-size: 18px; }
+.res-legend-item small { width: 100%; color: var(--text-3); font-size: 11px; }
+.ac-res-actions .btn { padding: 6px 10px; font-size: 12px; }

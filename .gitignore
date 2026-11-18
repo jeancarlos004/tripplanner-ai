@@ -73,3 +73,7 @@ tripplanner-web/frontend/tripplanner-frontend/dist/
 cdk.out/
 agentcore/.cache/
 agentcore/.cli/logs/
+.venv-test/
+
+# Config generada por deploy-all.ps1 (solo IDs públicos)
+tripplanner-web/frontend/tripplanner-frontend/.env.production
