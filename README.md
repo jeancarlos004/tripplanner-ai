@@ -1,3 +1,31 @@
+# TripPlanner AI · Trabajo Final (Programación Agéntica)
+
+Plataforma web para planificar, organizar y gestionar viajes sobre una **arquitectura multiagente**
+(Orchestrator + Flight Agent + Weather Agent en Amazon Bedrock AgentCore), un **backend serverless**
+(API Gateway + Lambda + DynamoDB) y un **frontend React** publicado en S3 + CloudFront.
+
+| | |
+|---|---|
+| 📐 Documentación técnica completa | [`tripplanner-web/docs/arquitectura.md`](tripplanner-web/docs/arquitectura.md) |
+| 🚀 Despliegue desde cero | `.\deploy-all.ps1` (backend → agentes → frontend) |
+| 🧪 Pruebas del backend | `tripplanner-web/backend/tests` (23 casos, moto) |
+| 🎬 Guion de la demo (12 pasos) | [Sección 9 de la documentación](tripplanner-web/docs/arquitectura.md#9-escenario-de-demostración) |
+
+```
+tripplannera2a/
+├── app/                     # Agentes Strands (OrchestratorAgent, FlightsAgent, WeatherAgent + MCP de clima)
+├── agentcore/               # Configuración declarativa de AgentCore (runtimes, memoria, credenciales)
+├── tripplanner-web/
+│   ├── backend/             # AWS SAM: template.yaml, lambdas/, tests/
+│   ├── frontend/            # React + Vite (Agent-Driven UI)
+│   └── docs/                # Arquitectura, modelo de datos, APIs, Lambdas, Tools, integración
+└── deploy-all.ps1           # Despliegue reproducible
+```
+
+---
+
+> Lo que sigue es la documentación original del workshop A2A.
+
 # 🌍 Trip Planner A2A Workshop
 
 Sistema multi-agente que implementa el protocolo **Agent-to-Agent (A2A)** para planificación de viajes inteligente. Demuestra separación de responsabilidades, descubrimiento de agentes y colaboración mediante estándares abiertos.
