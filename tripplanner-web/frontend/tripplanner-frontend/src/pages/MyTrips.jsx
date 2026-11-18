@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../lib/api.js'
 import { TripCard, ItineraryAgenda, ReservationList, PreferencesCard } from '../components/AgentCards.jsx'
 import { fmtDate, TRIP_STATUS } from '../lib/format.js'
+import { useAuth } from '../lib/AuthContext.jsx'
 import './MyTrips.css'
 
 const EMPTY = { origin: '', destination: '', startDate: '', endDate: '', travelers: 1, budget: '', currency: 'COP', preferences: '' }
@@ -185,7 +186,9 @@ function PreferencesForm({ prefs, onSaved }) {
 
 // ── Detalle: viaje + itinerario (agenda) + reservas ─────────────────────────
 function TripDetail({ tripId }) {
+  const { user } = useAuth()
   const [data, setData] = useState(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
   const [error, setError] = useState('')
   const [editingDay, setEditingDay] = useState(null)
   const [dayText, setDayText] = useState('')
@@ -196,6 +199,15 @@ function TripDetail({ tripId }) {
     try { setData(await api.getTrip(tripId)) } catch (e) { setError(e.message) }
   }, [tripId])
   useEffect(() => { load() }, [load])
+
+  async function exportPdf() {
+    setPdfBusy(true); setError('')
+    try {
+      // Carga diferida: jsPDF solo se descarga cuando el usuario exporta
+      const { downloadTripPdf } = await import('../lib/tripPdf.js')
+      downloadTripPdf({ ...data, userName: user?.name })
+    } catch (e) { setError(`No se pudo generar el PDF: ${e.message}`) } finally { setPdfBusy(false) }
+  }
 
   async function setStatus(status) {
     setBusy(true)
@@ -229,6 +241,9 @@ function TripDetail({ tripId }) {
             <button key={k} className="btn btn-secondary" disabled={busy} onClick={() => setStatus(k)} type="button">→ {v.label}</button>
           ))}
           <Link className="btn btn-ghost" to={`/reservations?trip=${trip.tripId}`}>📋 Nueva reserva</Link>
+          <button className="btn btn-primary" onClick={exportPdf} disabled={pdfBusy} type="button">
+            {pdfBusy ? 'Generando…' : '📄 Descargar PDF'}
+          </button>
         </div>
       </TripCard>
 
