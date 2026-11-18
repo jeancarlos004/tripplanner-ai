@@ -89,6 +89,8 @@ STATUS_BY_TOOL = {
     "get_reservations": "📋 Consultando reservas…",
     "update_reservation": "✏️ Actualizando la reserva…",
     "save_preferences": "💾 Guardando tus preferencias…",
+    "get_traveler_profile": "⭐ Revisando tus preferencias e historial de viajes…",
+    "show_recommendations": "✨ Preparando recomendaciones para ti…",
 }
 
 
@@ -388,7 +390,7 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
     @tool
     @safe
     def create_reservation(trip_id: str, reservation_type: str, title: str, details: dict,
-                           price: float = 0, reservation_date: str = "") -> str:
+                           price: float = 0, currency: str = "", reservation_date: str = "") -> str:
         """
         CreateReservation — registra una reserva SIMULADA asociada a un viaje.
         NUNCA incluyas datos de tarjeta ni de pago.
@@ -398,10 +400,14 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
             reservation_type: FLIGHT | HOTEL | ACTIVITY.
             title: Título corto (ej. "Avianca BOG→CTG", "Hotel Caribe 3 noches").
             details: Datos de la reserva (aerolínea, horarios, hotel, pasajeros, etc.).
-            price: Precio total estimado.
+            price: Precio TOTAL (todos los viajeros), numérico.
+            currency: Moneda ISO del precio (ej. "USD" si el vuelo se cotizó en dólares, "COP").
+                      Obligatoria si difiere de la moneda del viaje.
             reservation_date: Fecha de la reserva YYYY-MM-DD (opcional).
         """
         body = {"type": reservation_type.upper(), "title": title, "details": details, "price": price}
+        if currency:
+            body["currency"] = currency.upper()[:3]
         if reservation_date:
             body["date"] = reservation_date
         res = api.call("POST", f"/trips/{trip_id}/reservations", body)
@@ -458,12 +464,76 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
         emit("preferences", res["profile"].get("preferences", {}))
         return json.dumps({"ok": True, "preferences": merged}, ensure_ascii=False)
 
+    # ── Recomendaciones personalizadas ──────────────────────────────────────
+
+    @tool
+    @safe
+    def get_traveler_profile() -> str:
+        """
+        Obtiene el perfil del viajero para PERSONALIZAR recomendaciones: preferencias guardadas
+        (actividades, presupuesto, ritmo, alojamiento, restricciones alimentarias, aerolíneas)
+        e historial de viajes (destinos, fechas, viajeros, presupuesto). Llámala antes de recomendar.
+        """
+        profile = api.call("GET", "/profile").get("profile", {})
+        trips = api.call("GET", "/trips").get("trips", [])
+        history = [{
+            "destination": t.get("destination"), "origin": t.get("origin"),
+            "startDate": t.get("startDate"), "endDate": t.get("endDate"),
+            "travelers": t.get("travelers"), "budget": t.get("budget"),
+            "currency": t.get("currency"), "status": t.get("status"),
+            "preferences": t.get("preferences") if isinstance(t.get("preferences"), str) else "",
+        } for t in trips]
+        return json.dumps({"ok": True, "name": profile.get("name"),
+                           "preferences": profile.get("preferences", {}),
+                           "tripHistory": history}, ensure_ascii=False, default=str)
+
+    @tool
+    def show_recommendations(kind: str, title: str, items: list[dict], destination: str = "") -> str:
+        """
+        Muestra recomendaciones personalizadas como tarjetas visuales en la interfaz.
+
+        Args:
+            kind: "destinations" (a dónde viajar), "activities" (qué hacer en un destino)
+                  o "experiences" (planes especiales).
+            title: Título corto del bloque (ej. "Destinos para ti", "Qué hacer en Cartagena").
+            destination: Ciudad a la que aplican (vacío para destinos).
+            items: 3 a 6 recomendaciones. Cada una:
+                   {"name": "...", "description": "1-2 frases",
+                    "reason": "por qué encaja con ESTE usuario (cita su preferencia o historial)",
+                    "category": "playa|cultura|naturaleza|aventura|gastronomía|...",
+                    "estimatedCost": 150000, "currency": "COP", "bestTime": "mañana|tarde|noche|diciembre-abril",
+                    "location": "barrio o zona", "tags": ["...", "..."]}
+        """
+        return _show_recommendations(kind, title, items, destination)
+
+    def _show_recommendations(kind, title, items, destination=""):
+        clean = []
+        for it in (items or [])[:8]:
+            if not isinstance(it, dict) or not it.get("name"):
+                continue
+            item = {k: it.get(k) for k in ("name", "description", "reason", "category", "estimatedCost",
+                                            "currency", "bestTime", "location", "tags",
+                                            "dish", "priceLevel", "dietary", "mealTime")
+                    if it.get(k) not in (None, "", [])}
+            for k in ("name", "description", "reason", "category", "bestTime", "location", "dish", "mealTime"):
+                if k in item:
+                    item[k] = str(item[k])[:300]
+            for k in ("tags", "dietary"):
+                if k in item:
+                    item[k] = [str(t)[:30] for t in item[k]][:5] if isinstance(item[k], list) else []
+            clean.append(item)
+        if not clean:
+            return json.dumps({"ok": False, "error": "items vacío o inválido"})
+        emit("recommendations", {"kind": str(kind)[:20], "title": str(title)[:120],
+                                 "destination": str(destination)[:80], "items": clean})
+        return json.dumps({"ok": True, "shown": len(clean)}, ensure_ascii=False)
+
     return [
         ask_flights, ask_weather,
         create_trip, get_trips, get_trip_details, update_trip,
         create_itinerary, update_itinerary,
         create_reservation, get_reservations, update_reservation,
-        save_preferences,
+        save_preferences, get_traveler_profile, show_recommendations,
     ]
 
 
@@ -481,6 +551,8 @@ HERRAMIENTAS
 - create_itinerary, update_itinerary → itinerario día a día.
 - create_reservation, get_reservations, update_reservation → reservas SIMULADAS.
 - save_preferences → guarda preferencias que el usuario exprese (presupuesto, actividades, aerolíneas…).
+- get_traveler_profile → preferencias + historial de viajes del usuario (para personalizar).
+- show_recommendations → muestra recomendaciones como tarjetas.
 
 FLUJO
 1. Si el usuario quiere planear un viaje: identifica origen, destino, fechas, viajeros y presupuesto.
@@ -499,6 +571,17 @@ FLUJO
 4. Si el usuario pide reservar: create_reservation (tipo FLIGHT, HOTEL o ACTIVITY) con estado simulado.
    Aclara que la reserva es SIMULADA (no hay proveedor real).
 5. Para "mis viajes", "mis reservas" o retomar un viaje anterior usa get_trips / get_trip_details / get_reservations.
+6. RECOMENDACIONES PERSONALIZADAS ("recomiéndame", "¿a dónde puedo ir?", "¿qué hago en X?"):
+   a) Llama a get_traveler_profile.
+   b) Elige 3-6 opciones coherentes con sus preferencias, presupuesto, ritmo e historial
+      (no repitas destinos que ya visitó salvo que lo pida; usa su ciudad de origen habitual).
+   c) Llama a show_recommendations. En cada item, "reason" debe citar explícitamente algo del
+      perfil (p. ej. "Te gusta la playa y viajas con presupuesto moderado").
+   d) NO escribas texto antes de llamar a show_recommendations. Después, responde con 1-2 líneas
+      (sin volver a listar las opciones: ya se ven en las tarjetas) y UNA sola pregunta ofreciendo
+      buscar vuelos/clima o crear el viaje para la opción que elija.
+   Si no hay preferencias guardadas, recomienda opciones variadas y pregunta 1-2 preferencias clave.
+   Los costos son ESTIMADOS: indícalo.
 
 REGLAS
 - La interfaz muestra los resultados de las herramientas como tarjetas visuales (vuelos, clima, viaje,
@@ -507,6 +590,7 @@ REGLAS
 - Si una herramienta devuelve error, explícalo en lenguaje sencillo y propone cómo seguir.
 - NUNCA pidas ni guardes datos de tarjetas, CVV ni información de pago.
 - Fechas siempre en formato YYYY-MM-DD al llamar herramientas.
+- Al reservar, indica la moneda real del precio (currency), p. ej. USD si el vuelo se cotizó en dólares.
 """
 
 
@@ -650,6 +734,8 @@ async def invoke(payload, context):
                 return
 
     thinking = ThinkingFilter()
+    text_sent = False          # ya se emitió texto visible en esta respuesta
+    tool_since_text = False    # hubo una herramienta desde el último texto
     try:
         async for event in agent.stream_async(prompt.strip()):
             for ui in drain():
@@ -658,6 +744,7 @@ async def invoke(payload, context):
             tool_use = event.get("current_tool_use") if isinstance(event, dict) else None
             if tool_use and tool_use.get("toolUseId") not in announced and tool_use.get("name"):
                 announced.add(tool_use["toolUseId"])
+                tool_since_text = True
                 yield {"type": "status",
                        "message": STATUS_BY_TOOL.get(tool_use["name"], f"Usando {tool_use['name']}…")}
 
@@ -665,6 +752,11 @@ async def invoke(payload, context):
             if isinstance(chunk, str) and chunk:
                 visible = thinking.feed(chunk)
                 if visible:
+                    # Separa los bloques de texto que el modelo escribe antes y después de una herramienta
+                    if text_sent and tool_since_text:
+                        visible = "\n\n" + visible.lstrip()
+                    tool_since_text = False
+                    text_sent = True
                     yield {"type": "text", "delta": visible}
         rest = thinking.flush()
         if rest:

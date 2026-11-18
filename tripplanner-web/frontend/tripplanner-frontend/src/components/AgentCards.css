@@ -84,3 +84,17 @@
   .ac-res { flex-wrap: wrap; }
   .ac-res-actions { flex-direction: row; width: 100%; }
 }
+
+/* Recomendaciones */
+.ac-rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.ac-rec { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.ac-rec-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.ac-rec-name { font-weight: 700; font-size: 15px; }
+.ac-rec-price { color: var(--amber); font-weight: 700; letter-spacing: 1px; }
+.ac-rec-dish { font-size: 13px; color: var(--cyan-light); }
+.ac-rec-desc { font-size: 13px; color: var(--text-2); }
+.ac-rec-reason { font-size: 12.5px; background: rgba(139,92,246,.1); border-left: 3px solid var(--violet); border-radius: 6px; padding: 7px 9px; color: var(--text); }
+.ac-rec-reason b { color: #c4b5fd; }
+.ac-rec-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.ac-rec-foot { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); margin-top: auto; }
+.ac-recs.kind-gastronomy .ac-rec { border-top: 3px solid var(--amber); }

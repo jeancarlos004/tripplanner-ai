@@ -7,6 +7,7 @@ import './Chat.css'
 
 const SUGGESTED = [
   'Quiero organizar unas vacaciones de cuatro días en Cartagena. Salgo desde Bogotá, viajo con dos personas más y tengo un presupuesto de 5 millones de pesos. Quiero conocer el clima, encontrar vuelos y organizar algunas actividades turísticas.',
+  'Recomiéndame destinos para mi próximo viaje según mis preferencias',
   'Muéstrame mis viajes guardados',
   '¿Qué reservas tengo registradas?',
 ]

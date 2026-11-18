@@ -222,6 +222,53 @@ export function PreferencesCard({ prefs }) {
   )
 }
 
+// ── Recomendaciones personalizadas ──────────────────────────────────────────
+const REC_KIND = {
+  destinations: { icon: '🧭', label: 'Destinos recomendados' },
+  activities:   { icon: '🎯', label: 'Actividades recomendadas' },
+  experiences:  { icon: '✨', label: 'Experiencias recomendadas' },
+  gastronomy:   { icon: '🍽️', label: 'Recomendaciones gastronómicas' },
+}
+const PRICE_LEVEL = n => (Number(n) >= 1 && Number(n) <= 4 ? '$'.repeat(Number(n)) : null)
+
+export function RecommendationCards({ data }) {
+  const items = data?.items || []
+  if (!items.length) return null
+  const kind = REC_KIND[data.kind] || REC_KIND.experiences
+  return (
+    <div className={`ac-block ac-recs kind-${data.kind}`}>
+      <div className="ac-head">
+        <span className="ac-title">{kind.icon} {data.title || kind.label}</span>
+        {data.destination && <span className="ac-sub">📍 {data.destination}</span>}
+      </div>
+      <div className="ac-rec-grid">
+        {items.map((it, i) => (
+          <div key={i} className="ac-rec">
+            <div className="ac-rec-top">
+              <span className="ac-rec-name">{it.name}</span>
+              {PRICE_LEVEL(it.priceLevel) && <span className="ac-rec-price" title="Nivel de precio">{PRICE_LEVEL(it.priceLevel)}</span>}
+            </div>
+            {it.dish && <div className="ac-rec-dish">🍴 {it.dish}</div>}
+            {it.description && <div className="ac-rec-desc">{it.description}</div>}
+            {it.reason && <div className="ac-rec-reason"><b>Para ti:</b> {it.reason}</div>}
+            <div className="ac-rec-meta">
+              {it.category && <span className="tag">{it.category}</span>}
+              {(it.dietary || []).map(t => <span key={t} className="tag tag-green">✓ {t}</span>)}
+              {(it.tags || []).map(t => <span key={t} className="tag">{t}</span>)}
+            </div>
+            <div className="ac-rec-foot">
+              {it.location && <span>📍 {it.location}</span>}
+              {(it.bestTime || it.mealTime) && <span>🕒 {it.mealTime || it.bestTime}</span>}
+              {it.estimatedCost != null && <span>💵 ~{money(it.estimatedCost, it.currency || 'COP')}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="ac-foot">Costos estimados por el asistente · verifica horarios y precios antes de ir.</div>
+    </div>
+  )
+}
+
 // ── Selector: evento "ui" del agente → componente ───────────────────────────
 export function AgentUI({ component, data }) {
   switch (component) {
@@ -232,6 +279,7 @@ export function AgentUI({ component, data }) {
     case 'itinerary':    return <ItineraryAgenda days={data?.days} />
     case 'reservations': return <ReservationList reservations={data} />
     case 'preferences':  return <PreferencesCard prefs={data} />
+    case 'recommendations': return <RecommendationCards data={data} />
     default:             return null
   }
 }
