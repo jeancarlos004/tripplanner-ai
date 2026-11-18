@@ -77,3 +77,4 @@ agentcore/.cli/logs/
 
 # Config generada por deploy-all.ps1 (solo IDs públicos)
 tripplanner-web/frontend/tripplanner-frontend/.env.production
+tripplanner-web/.demo-user.local.json

@@ -264,7 +264,8 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
     @safe
     def create_trip(origin: str, destination: str, start_date: str, end_date: str,
                     travelers: int, budget: float, currency: str = "COP",
-                    preferences: str = "", name: str = "") -> str:
+                    preferences: str = "", name: str = "",
+                    itinerary_days: list[dict] | None = None) -> str:
         """
         CreateTrip — crea y guarda un viaje del usuario en DynamoDB.
 
@@ -278,6 +279,10 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
             currency: Moneda ISO de 3 letras (por defecto COP).
             preferences: Preferencias o restricciones del viaje en texto.
             name: Nombre corto del viaje (opcional).
+            itinerary_days: Itinerario a guardar junto con el viaje (recomendado). Lista de días
+                  con el mismo formato que create_itinerary:
+                  [{"date": "YYYY-MM-DD", "activities": [{"time": "09:00", "title": "...",
+                    "description": "...", "location": "...", "category": "...", "estimatedCost": 0}]}]
         """
         res = api.call("POST", "/trips", {
             "origin": origin, "destination": destination, "startDate": start_date,
@@ -285,7 +290,17 @@ def _build_tools(api: BusinessApi, ui_events: "queue.Queue[dict]"):
             "currency": currency, "preferences": preferences, "name": name or None,
         })
         emit("trip", res["trip"])
-        return json.dumps({"ok": True, "tripId": res["tripId"], "trip": res["trip"]}, ensure_ascii=False)
+        result = {"ok": True, "tripId": res["tripId"], "trip": res["trip"]}
+        if itinerary_days:
+            # Se guarda DESPUÉS de crear el viaje: evita que el modelo llame a
+            # create_itinerary en paralelo con un tripId que aún no existe.
+            try:
+                it = api.call("POST", f"/trips/{res['tripId']}/itinerary", {"days": itinerary_days})
+                emit("itinerary", {"tripId": res["tripId"], "days": it["itinerary"]})
+                result["itinerary"] = {"ok": True, "days": len(it["itinerary"])}
+            except ApiCallError as e:
+                result["itinerary"] = {"ok": False, "error": e.message}
+        return json.dumps(result, ensure_ascii=False)
 
     @tool
     @safe
@@ -470,12 +485,17 @@ HERRAMIENTAS
 FLUJO
 1. Si el usuario quiere planear un viaje: identifica origen, destino, fechas, viajeros y presupuesto.
    - "viajo con dos personas más" = 3 viajeros en total.
-   - Si no da fechas, propón fechas concretas (p. ej. dentro de 3 semanas) y dilo explícitamente.
+   - Si no da fechas, propón fechas concretas que empiecen al menos 14 días después de hoy
+     y dilo explícitamente.
    - Llama a ask_flights y ask_weather (puedes llamarlas en paralelo).
 2. Resume los resultados en 3-6 líneas: mejor opción de vuelo según precio/horario, clima esperado
-   y si el plan encaja en el presupuesto. Ofrece crear el viaje.
-3. Cuando el usuario pida crear/guardar el viaje: create_trip, y a continuación create_itinerary con
-   2-4 actividades por día coherentes con el clima, el presupuesto y las preferencias.
+   y si el plan encaja en el presupuesto. Termina preguntando si quiere que cree el viaje con su itinerario.
+   En este primer paso NO llames create_trip, create_itinerary ni create_reservation.
+3. SOLO cuando el usuario pida explícitamente crear/guardar el viaje: llama UNA vez a create_trip
+   pasando itinerary_days con 2-4 actividades por día (coherentes con el clima, el presupuesto y las
+   preferencias). Así el viaje y su itinerario se guardan juntos.
+   create_itinerary / update_itinerary solo se usan después, con un tripId YA devuelto por una herramienta.
+   Nunca llames en paralelo herramientas que dependan del resultado de otra.
 4. Si el usuario pide reservar: create_reservation (tipo FLIGHT, HOTEL o ACTIVITY) con estado simulado.
    Aclara que la reserva es SIMULADA (no hay proveedor real).
 5. Para "mis viajes", "mis reservas" o retomar un viaje anterior usa get_trips / get_trip_details / get_reservations.
@@ -514,6 +534,54 @@ def _build_session_manager(session_id: str, actor_id: str):
 
 
 # ── Entrypoint AgentCore (HTTP streaming) ─────────────────────────────────────
+
+class ThinkingFilter:
+    """
+    Elimina los bloques <thinking>…</thinking> del stream de texto aunque la
+    etiqueta llegue partida en varios fragmentos (p. ej. "<", "thinking", ">").
+    """
+    OPEN, CLOSE = "<thinking>", "</thinking>"
+
+    def __init__(self):
+        self.buf = ""
+        self.inside = False
+
+    @staticmethod
+    def _partial_tail(text: str, tag: str) -> int:
+        """Longitud del sufijo de text que es prefijo de tag (posible etiqueta incompleta)."""
+        for n in range(min(len(tag) - 1, len(text)), 0, -1):
+            if tag.startswith(text[-n:]):
+                return n
+        return 0
+
+    def feed(self, chunk: str) -> str:
+        self.buf += chunk
+        out = []
+        while True:
+            if self.inside:
+                i = self.buf.find(self.CLOSE)
+                if i < 0:
+                    keep = self._partial_tail(self.buf, self.CLOSE)
+                    self.buf = self.buf[len(self.buf) - keep:] if keep else ""
+                    break
+                self.buf = self.buf[i + len(self.CLOSE):].lstrip("\n")
+                self.inside = False
+            else:
+                i = self.buf.find(self.OPEN)
+                if i < 0:
+                    keep = self._partial_tail(self.buf, self.OPEN)
+                    out.append(self.buf[:len(self.buf) - keep])
+                    self.buf = self.buf[len(self.buf) - keep:]
+                    break
+                out.append(self.buf[:i])
+                self.buf = self.buf[i + len(self.OPEN):]
+                self.inside = True
+        return "".join(out)
+
+    def flush(self) -> str:
+        rest, self.buf = ("" if self.inside else self.buf), ""
+        return rest
+
 
 def _sanitize_actor(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "-", value)[:100] or "anonymous"
@@ -581,7 +649,7 @@ async def invoke(payload, context):
             except queue.Empty:
                 return
 
-    in_thinking = False
+    thinking = ThinkingFilter()
     try:
         async for event in agent.stream_async(prompt.strip()):
             for ui in drain():
@@ -595,16 +663,12 @@ async def invoke(payload, context):
 
             chunk = event.get("data") if isinstance(event, dict) else None
             if isinstance(chunk, str) and chunk:
-                # Oculta los bloques <thinking> que algunos modelos emiten
-                if "<thinking>" in chunk:
-                    in_thinking = True
-                if not in_thinking:
-                    yield {"type": "text", "delta": chunk}
-                if "</thinking>" in chunk:
-                    in_thinking = False
-                    tail = chunk.split("</thinking>", 1)[1]
-                    if tail:
-                        yield {"type": "text", "delta": tail}
+                visible = thinking.feed(chunk)
+                if visible:
+                    yield {"type": "text", "delta": visible}
+        rest = thinking.flush()
+        if rest:
+            yield {"type": "text", "delta": rest}
     except Exception as e:  # noqa: BLE001
         logging.getLogger(__name__).exception("Error en el Orchestrator")
         yield {"type": "error", "message": f"Ocurrió un problema procesando tu solicitud ({type(e).__name__})."}
