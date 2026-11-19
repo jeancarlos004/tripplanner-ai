@@ -4,6 +4,8 @@ import { api } from '../lib/api.js'
 import { TripCard, ItineraryAgenda, ReservationList, PreferencesCard } from '../components/AgentCards.jsx'
 import { fmtDate, TRIP_STATUS } from '../lib/format.js'
 import { useAuth } from '../lib/AuthContext.jsx'
+import PageHeader from '../components/PageHeader.jsx'
+import Icon from '../components/Icon.jsx'
 import './MyTrips.css'
 
 const EMPTY = { origin: '', destination: '', startDate: '', endDate: '', travelers: 1, budget: '', currency: 'COP', preferences: '' }
@@ -61,14 +63,13 @@ function TripList() {
 
   return (
     <div className="mytrips-page">
-      <div className="trips-header">
-        <h1 className="page-title" style={{ marginBottom: 0 }}>🗺️ Mis Viajes</h1>
+      <PageHeader tone="sea" icon="map" kicker="Persistencia · DynamoDB" title="Mis viajes">
         <button className="btn btn-primary" onClick={() => setShowForm(!showForm)} type="button">
-          {showForm ? '✕ Cancelar' : '+ Nuevo viaje'}
+          {showForm ? 'Cancelar' : <><Icon name="plus" /> Nuevo viaje</>}
         </button>
-      </div>
+      </PageHeader>
 
-      {error && <div className="flight-error">⚠️ {error}</div>}
+      {error && <div className="flight-error">{error}</div>}
 
       {showForm && (
         <div className="trip-create-form">
@@ -94,7 +95,7 @@ function TripList() {
                 onChange={e => setForm({ ...form, preferences: e.target.value })} rows={2} />
             </Field>
             <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Guardando…</> : '💾 Crear viaje'}
+              {saving ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Guardando…</> : 'Crear viaje'}
             </button>
           </form>
         </div>
@@ -178,8 +179,8 @@ function PreferencesForm({ prefs, onSaved }) {
         <Field label="Asiento"><input value={p.seatPreference} maxLength={40} onChange={e => setP({ ...p, seatPreference: e.target.value })} placeholder="ventana" /></Field>
         <Field label="Restricciones alimentarias"><input value={p.dietaryRestrictions} maxLength={200} onChange={e => setP({ ...p, dietaryRestrictions: e.target.value })} /></Field>
       </div>
-      {error && <div className="flight-error">⚠️ {error}</div>}
-      <button className="btn btn-primary" disabled={saving} type="submit">{saving ? 'Guardando…' : '💾 Guardar preferencias'}</button>
+      {error && <div className="flight-error">{error}</div>}
+      <button className="btn btn-primary" disabled={saving} type="submit">{saving ? 'Guardando…' : 'Guardar preferencias'}</button>
     </form>
   )
 }
@@ -222,7 +223,7 @@ function TripDetail({ tripId }) {
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
 
-  if (error && !data) return <div className="mytrips-page"><BackLink /><div className="flight-error">⚠️ {error}</div></div>
+  if (error && !data) return <div className="mytrips-page"><BackLink /><div className="flight-error">{error}</div></div>
   if (!data) return <div className="mytrips-page"><div className="loading"><div className="spinner" /> Cargando viaje…</div></div>
 
   const { trip, itinerary, reservations } = data
@@ -232,26 +233,26 @@ function TripDetail({ tripId }) {
   return (
     <div className="mytrips-page">
       <BackLink />
-      <h1 className="page-title">{trip.name || `${trip.origin} → ${trip.destination}`}</h1>
-      {error && <div className="flight-error">⚠️ {error}</div>}
+      <PageHeader tone="sea" icon="map" kicker="Detalle del viaje" title={trip.name || `${trip.origin} → ${trip.destination}`} />
+      {error && <div className="flight-error">{error}</div>}
 
       <TripCard trip={trip}>
         <div className="trip-actions">
           {Object.entries(TRIP_STATUS).filter(([k]) => k !== trip.status).map(([k, v]) => (
             <button key={k} className="btn btn-secondary" disabled={busy} onClick={() => setStatus(k)} type="button">→ {v.label}</button>
           ))}
-          <Link className="btn btn-ghost" to={`/reservations?trip=${trip.tripId}`}>📋 Nueva reserva</Link>
+          <Link className="btn btn-ghost" to={`/reservations?trip=${trip.tripId}`}><Icon name="ticket" /> Nueva reserva</Link>
           <Link className="btn btn-ghost"
             to={`/chat?q=${encodeURIComponent(`Recomiéndame qué y dónde comer en ${trip.destination} para mi viaje del ${trip.startDate} al ${trip.endDate}, según mis preferencias y presupuesto`)}`}>
-            🍽️ Dónde comer
+            <Icon name="food" /> Dónde comer
           </Link>
           <button className="btn btn-primary" onClick={exportPdf} disabled={pdfBusy} type="button">
-            {pdfBusy ? 'Generando…' : '📄 Descargar PDF'}
+            {pdfBusy ? 'Generando…' : <><Icon name="file" /> Descargar PDF</>}
           </button>
         </div>
       </TripCard>
 
-      <ItineraryAgenda days={itinerary} title="📅 Itinerario (agenda)" />
+      <ItineraryAgenda days={itinerary} title="Itinerario" />
 
       <div className="section-title" style={{ marginTop: 20 }}>Editar itinerario por día</div>
       <div className="day-chips">
@@ -269,7 +270,7 @@ function TripDetail({ tripId }) {
             <textarea rows={6} value={dayText} onChange={e => setDayText(e.target.value)} placeholder={'09:00 Tour por la Ciudad Amurallada - Centro Histórico\n14:00 Playa - Islas del Rosario'} required />
           </label>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-primary" disabled={busy || !dayText.trim()} type="submit">💾 Guardar día</button>
+            <button className="btn btn-primary" disabled={busy || !dayText.trim()} type="submit"><Icon name="check" /> Guardar día</button>
             <button className="btn btn-ghost" type="button" onClick={() => setEditingDay(null)}>Cancelar</button>
           </div>
         </form>
@@ -281,5 +282,5 @@ function TripDetail({ tripId }) {
 }
 
 function BackLink() {
-  return <Link to="/trips" className="ac-link" style={{ display: 'inline-block', marginBottom: 14 }}>← Volver a Mis viajes</Link>
+  return <Link to="/trips" className="ac-link back"><Icon name="back" size={16} /> Volver a Mis viajes</Link>
 }

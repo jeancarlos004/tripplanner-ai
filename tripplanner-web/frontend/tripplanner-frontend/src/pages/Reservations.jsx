@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api.js'
 import { ReservationList, StatusBadge } from '../components/AgentCards.jsx'
 import { RES_STATUS, RES_TYPE, detailsText } from '../lib/format.js'
+import PageHeader from '../components/PageHeader.jsx'
+import Icon from '../components/Icon.jsx'
 import './Reservations.css'
 
 const EMPTY = { type: 'FLIGHT', title: '', details: '', price: '', date: '' }
@@ -62,12 +64,11 @@ export default function Reservations() {
 
   return (
     <div className="reservations-page">
-      <div className="res-header-row">
-        <h1 className="page-title" style={{ marginBottom: 0 }}>📋 Gestión de Reservas</h1>
+      <PageHeader tone="coral" icon="ticket" kicker="Reservas simuladas · DynamoDB" title="Gestión de reservas">
         <button className="btn btn-primary" onClick={() => (form ? setForm(null) : openCreate())} disabled={!trips.length} type="button">
-          {form ? '✕ Cancelar' : '+ Nueva reserva'}
+          {form ? 'Cancelar' : <><Icon name="plus" /> Nueva reserva</>}
         </button>
-      </div>
+      </PageHeader>
 
       <div className="res-legend">
         {Object.entries(RES_STATUS).map(([k, v]) => (
@@ -77,7 +78,7 @@ export default function Reservations() {
         ))}
       </div>
 
-      {error && <div className="flight-error">⚠️ {error}</div>}
+      {error && <div className="flight-error">{error}</div>}
 
       {form && (
         <div className="res-create-form">
@@ -126,7 +127,7 @@ export default function Reservations() {
       )}
 
       {trips.length > 0 && (
-        <div className="trip-selector-card animate-fade-in">
+        <div className="trip-selector-card" data-reveal>
           <label>Filtrar por viaje</label>
           <select value={filterTrip} onChange={e => setFilterTrip(e.target.value)}>
             <option value="">Todos los viajes</option>

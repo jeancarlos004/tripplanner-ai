@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useAgentQuery } from '../lib/useAgentQuery.js'
 import { FlightCards } from '../components/AgentCards.jsx'
 import { renderMarkdown } from '../lib/format.js'
+import PageHeader from '../components/PageHeader.jsx'
+import Icon from '../components/Icon.jsx'
 import './Flights.css'
 
 const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
@@ -20,9 +22,9 @@ export default function Flights() {
 
   return (
     <div className="flights-page">
-      <h1 className="page-title">✈️ Búsqueda de Vuelos</h1>
+      <PageHeader tone="sky" icon="plane" kicker="Flight Agent · MCP de vuelos" title="Búsqueda de vuelos" />
 
-      <div className="flight-search-card animate-fade-in">
+      <div className="flight-search-card" data-reveal>
         <form onSubmit={search}>
           <div className="search-route">
             <div className="route-input">
@@ -32,7 +34,7 @@ export default function Flights() {
                   onChange={e => setForm({ ...form, origin: e.target.value })} />
               </div>
             </div>
-            <div className="route-arrow">→</div>
+            <div className="route-arrow" aria-hidden="true"><Icon name="plane" size={18} /></div>
             <div className="route-input">
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label htmlFor="f-dest">Destino (ciudad o IATA)</label>

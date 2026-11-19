@@ -80,3 +80,4 @@ tripplanner-web/frontend/tripplanner-frontend/.env.production
 tripplanner-web/.demo-user.local.json
 tripplanner-web/frontend/tripplanner-frontend/src/dev/fixtures.json
 .claude/
+tripplanner-web/frontend/tripplanner-frontend/src/dev/mock-data.json

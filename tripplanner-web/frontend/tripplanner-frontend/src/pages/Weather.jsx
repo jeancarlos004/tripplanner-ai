@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useAgentQuery } from '../lib/useAgentQuery.js'
 import { WeatherCards } from '../components/AgentCards.jsx'
 import { renderMarkdown } from '../lib/format.js'
+import PageHeader from '../components/PageHeader.jsx'
+import Icon from '../components/Icon.jsx'
 import './Weather.css'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -22,9 +24,9 @@ export default function Weather() {
 
   return (
     <div className="weather-page">
-      <h1 className="page-title">🌤️ Información Meteorológica</h1>
+      <PageHeader tone="sun" icon="weather" kicker="Weather Agent · MCP de clima" title="Información meteorológica" />
 
-      <div className="weather-search-card animate-fade-in">
+      <div className="weather-search-card" data-reveal>
         <form onSubmit={search}>
           <div className="form-group">
             <label htmlFor="w-city">Ciudad de destino</label>

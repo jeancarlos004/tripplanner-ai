@@ -1,100 +1,186 @@
-/* ── Agent-Driven UI ─────────────────────────────────────────── */
-.ac-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-top: 12px; animation: fadeUp .4s var(--ease) both; }
-.ac-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.ac-title { font-weight: 700; font-size: 15px; }
-.ac-sub { color: var(--text-2); font-size: 13px; }
-.ac-link { font-size: 13px; font-weight: 600; }
-.ac-foot { margin-top: 10px; color: var(--text-3); font-size: 12px; }
-.ac-empty { color: var(--text-3); font-size: 14px; padding: 14px; text-align: center; border: 1px dashed var(--border); border-radius: 12px; margin-top: 12px; }
+/* ── Agent-Driven UI ───────────────────────────────────────────────────── */
+.ac-block {
+  --tone: var(--sea); --tone-dim: var(--sea-dim);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 16px; margin-top: 12px; position: relative;
+}
+.ac-block::before {   /* filo superior con el color del dominio */
+  content: ''; position: absolute; top: -1px; left: 18px; right: 18px; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--tone), transparent);
+  opacity: .85;
+}
+.ac-block.tone-sky   { --tone: var(--sky);   --tone-dim: var(--sky-dim); }
+.ac-block.tone-sun   { --tone: var(--sun);   --tone-dim: var(--sun-dim); }
+.ac-block.tone-coral { --tone: var(--coral); --tone-dim: var(--coral-dim); }
+.ac-block.tone-agent { --tone: var(--agent); --tone-dim: var(--agent-dim); }
 
-.tag-green { background: rgba(16,185,129,.15) !important; color: #34d399 !important; }
-.tag-cyan  { background: rgba(6,182,212,.15) !important;  color: #22d3ee !important; }
-.tag-amber { background: rgba(245,158,11,.15) !important; color: #fbbf24 !important; }
-.badge-cancelled { background: rgba(244,63,94,.12); color: #fb7185; border: 1px solid rgba(244,63,94,.25); }
+.ac-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.ac-title { display: inline-flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.ac-title-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--tone-dim); color: var(--tone); }
+.ac-sub { color: var(--text-2); font-size: 12.5px; font-family: var(--font-mono); }
+.ac-head .tag, .ac-head .ac-link { margin-left: auto; }
+.ac-link { font-size: 13px; font-weight: 600; color: var(--tone); }
+.ac-foot { margin-top: 12px; color: var(--text-3); font-size: 11.5px; }
+.ac-empty { color: var(--text-3); font-size: 14px; padding: 16px; text-align: center; border: 1px dashed var(--border-2); border-radius: 12px; margin-top: 12px; }
 
-/* Vuelos */
-.ac-flights { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
-.ac-flight { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.ac-flight.best { border-color: rgba(16,185,129,.5); box-shadow: 0 0 18px rgba(16,185,129,.12); }
-.ac-flight-tags { display: flex; gap: 6px; min-height: 22px; flex-wrap: wrap; }
-.ac-airline { font-weight: 700; }
-.ac-airline span { color: var(--text-3); font-weight: 500; font-size: 13px; }
-.ac-times { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
-.ac-times b { font-size: 18px; display: block; }
-.ac-times small { color: var(--text-3); font-size: 11px; }
-.ac-line { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--text-3); }
-.ac-line i { width: 100%; height: 1px; background: var(--border); margin: 3px 0; }
-.ac-flight-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
-.ac-price { font-size: 18px; font-weight: 800; background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.ac-btn { padding: 7px 12px; font-size: 12px; }
+.tag-green { background: var(--ok-dim) !important;  color: var(--ok) !important; }
+.tag-cyan  { background: var(--sky-dim) !important; color: var(--sky) !important; }
+.tag-amber { background: var(--sun-dim) !important; color: var(--sun) !important; }
+.tag-slate { background: rgba(156, 183, 196, .14) !important; color: var(--text-2) !important; }
 
-/* Clima */
-.ac-weather { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
-.ac-day { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; }
-.ac-day-date { font-size: 12px; color: var(--text-2); text-transform: capitalize; }
-.ac-day-icon { font-size: 30px; margin: 6px 0; }
-.ac-day-temp { font-size: 14px; color: var(--text-2); }
-.ac-day-temp b { font-size: 20px; color: var(--text); }
-.ac-day-cond { font-size: 12px; margin: 4px 0; }
-.ac-day-meta { display: flex; justify-content: center; gap: 8px; font-size: 11px; color: var(--text-3); flex-wrap: wrap; }
+/* ── Vuelos: pase de abordar ───────────────────────────────────────────── */
+.ac-flights { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+.pass {
+  --notch: 9px;
+  display: grid; grid-template-columns: 1fr auto;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px;
+  position: relative; overflow: hidden;
+  transition: transform .3s var(--ease), border-color .25s, box-shadow .25s;
+}
+.pass:hover { transform: translateY(-2px); border-color: rgba(92, 200, 255, .45); box-shadow: 0 10px 28px rgba(0, 0, 0, .35); }
+.pass.best { border-color: rgba(52, 211, 153, .5); }
+.pass-main { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pass-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.pass-airline { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.pass-number { font-size: 11.5px; color: var(--text-3); letter-spacing: .08em; }
+.pass-route { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
+.pass-route b { display: block; font-size: 20px; font-weight: 600; line-height: 1; }
+.pass-route span { font-size: 11px; color: var(--sky); letter-spacing: .14em; }
+.pass-route .right { text-align: right; }
+.pass-line { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 70px; }
+.pass-line small { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.pass-line i { display: flex; align-items: center; width: 100%; color: var(--sky); }
+.pass-line i::before, .pass-line i::after { content: ''; flex: 1; border-top: 1px dashed var(--border-2); }
+.pass-line i svg { margin: 0 4px; transform: rotate(45deg); }
+.pass-tags { display: flex; gap: 6px; min-height: 20px; flex-wrap: wrap; }
+.pass-stub {
+  width: 118px; padding: 14px 14px 14px 18px;
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  border-left: 2px dashed var(--border-2); position: relative;
+  background: linear-gradient(180deg, rgba(92, 200, 255, .07), transparent);
+}
+.pass-stub::before, .pass-stub::after {   /* muescas de la perforación */
+  content: ''; position: absolute; left: calc(-1 * var(--notch) - 1px); width: calc(var(--notch) * 2); height: calc(var(--notch) * 2);
+  border-radius: 50%; background: var(--bg-card);
+}
+.pass-stub::before { top: calc(-1 * var(--notch)); }
+.pass-stub::after  { bottom: calc(-1 * var(--notch)); }
+.pass-stub small { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--text-3); }
+.pass-price { font-size: 16px; font-weight: 600; color: var(--text); }
+.pass.best .pass-price { color: var(--ok); }
+.pass-link { font-size: 12px; font-weight: 600; color: var(--sky); }
 
-/* Viajes */
-.ac-trips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.ac-trip { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
-.ac-trip-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-.ac-trip-route { font-size: 15px; }
-.ac-trip-route b { font-size: 17px; }
-.ac-trip-dates { font-size: 12px; color: var(--text-2); margin-top: 4px; }
-.ac-trip-stats { display: flex; gap: 14px; margin-top: 10px; font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
-.ac-trip-prefs { margin-top: 8px; font-size: 12px; color: var(--text-3); }
+/* ── Clima ─────────────────────────────────────────────────────────────── */
+.ac-weather { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
+.wx-day {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 13px;
+  padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center;
+}
+.wx-date { font-size: 12px; color: var(--text-2); }
+.wx-icon { font-size: 30px; line-height: 1.2; }
+.wx-cond { font-size: 12px; color: var(--text-2); min-height: 32px; }
+.wx-temps { display: flex; gap: 8px; align-items: baseline; }
+.wx-temps b { font-size: 20px; font-weight: 600; color: var(--sun); }
+.wx-temps span { color: var(--text-3); font-size: 14px; }
+.wx-range { position: relative; width: 100%; height: 4px; border-radius: 4px; background: var(--bg-hover); }
+.wx-range i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg, var(--sky), var(--sun)); }
+.wx-meta { display: flex; gap: 10px; font-size: 11px; color: var(--text-3); }
+.wx-meta .rain { color: var(--sky); }
 
-/* Agenda */
-.ac-agenda { display: flex; flex-direction: column; gap: 12px; }
-.ac-agenda-day { border-left: 3px solid var(--cyan); padding-left: 14px; }
-.ac-agenda-label { display: flex; gap: 10px; align-items: baseline; text-transform: capitalize; font-weight: 600; margin-bottom: 6px; }
-.ac-agenda-n { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--cyan); }
-.ac-agenda-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.ac-agenda-items li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; }
-.ac-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; padding-top: 2px; }
-.ac-act-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.ac-act-desc { font-size: 13px; color: var(--text-2); margin-top: 2px; }
-.ac-act-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-3); margin-top: 2px; flex-wrap: wrap; }
-.ac-agenda-notes { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+/* ── Viajes ────────────────────────────────────────────────────────────── */
+.ac-trips { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.ac-trip { background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px; padding: 15px 16px; display: flex; flex-direction: column; gap: 8px; }
+.ac-trip-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.ac-trip-codes { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 600; letter-spacing: .08em; }
+.ac-trip-codes i { color: var(--sea); display: flex; }
+.ac-trip-codes i svg { transform: rotate(45deg); }
+.ac-trip-route { font-size: 13.5px; color: var(--text-2); }
+.ac-trip-route b { color: var(--text); font-weight: 600; }
+.ac-trip-stats { display: flex; gap: 8px 14px; font-size: 12.5px; color: var(--text-2); flex-wrap: wrap; }
+.ac-trip-stats span { display: inline-flex; align-items: center; gap: 5px; }
+.ac-trip-stats .icon { color: var(--text-3); }
+.ac-trip-budget { color: var(--sea); }
+.ac-trip-prefs { font-size: 12.5px; color: var(--text-3); border-top: 1px dashed var(--border); padding-top: 8px; }
 
-/* Reservas */
+/* ── Itinerario: ruta con paradas ──────────────────────────────────────── */
+.route { list-style: none; display: flex; flex-direction: column; }
+.route-day { display: grid; grid-template-columns: 38px 1fr; gap: 14px; position: relative; padding-bottom: 18px; }
+.route-day:last-child { padding-bottom: 0; }
+.route-day::before {   /* trazo de la ruta entre días */
+  content: ''; position: absolute; left: 18px; top: 36px; bottom: 0; width: 2px;
+  background: repeating-linear-gradient(180deg, var(--sea) 0 6px, transparent 6px 11px); opacity: .5;
+}
+.route-day:last-child::before { display: none; }
+.route-marker {
+  width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--bg-1); border: 2px solid var(--sea); color: var(--sea);
+  font-size: 12px; font-weight: 600; box-shadow: 0 0 0 4px var(--sea-dim);
+}
+.route-body { min-width: 0; }
+.route-date { font-family: var(--font-display); font-weight: 600; margin: 7px 0 8px; }
+.route-date::first-letter, .wx-date::first-letter { text-transform: uppercase; }
+.route-stops { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.route-stops li { display: grid; grid-template-columns: 50px 1fr; gap: 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px; }
+.route-time { font-size: 12.5px; color: var(--sea); padding-top: 1px; }
+.route-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.route-desc { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.route-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-3); margin-top: 3px; flex-wrap: wrap; }
+.route-notes { font-size: 12.5px; color: var(--text-3); margin-top: 8px; }
+
+/* ── Reservas: talón de boleto ─────────────────────────────────────────── */
 .ac-res-list { display: flex; flex-direction: column; gap: 10px; }
-.ac-res { display: flex; gap: 12px; align-items: flex-start; background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px; border-left: 3px solid var(--cyan); }
-.ac-res.type-HOTEL { border-left-color: var(--violet); }
-.ac-res.type-ACTIVITY { border-left-color: var(--amber); }
-.ac-res-icon { font-size: 22px; }
-.ac-res-body { flex: 1; min-width: 0; }
-.ac-res-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
-.ac-res-title { font-weight: 600; }
-.ac-res-details { font-size: 13px; color: var(--text-2); margin-top: 4px; overflow-wrap: anywhere; }
-.ac-res-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-3); margin-top: 6px; flex-wrap: wrap; }
-.ac-res-actions { display: flex; flex-direction: column; gap: 6px; }
+.stub {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 13px; padding: 12px 14px;
+  position: relative; overflow: hidden;
+}
+.stub::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--coral); }
+.stub.type-FLIGHT::before { background: var(--sky); }
+.stub.type-HOTEL::before  { background: var(--agent); }
+.stub.type-ACTIVITY::before { background: var(--sun); }
+.stub-icon { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--bg-hover); color: var(--text-2); }
+.stub.type-FLIGHT .stub-icon { color: var(--sky); background: var(--sky-dim); }
+.stub.type-HOTEL .stub-icon  { color: var(--agent); background: var(--agent-dim); }
+.stub.type-ACTIVITY .stub-icon { color: var(--sun); background: var(--sun-dim); }
+.stub-body { min-width: 0; }
+.stub-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.stub-title { font-weight: 600; }
+.stub-details { font-size: 12.5px; color: var(--text-2); margin-top: 3px; overflow-wrap: anywhere; }
+.stub-meta { display: flex; gap: 12px; font-size: 11.5px; color: var(--text-3); margin-top: 4px; flex-wrap: wrap; }
+.stub-price { font-size: 15px; font-weight: 600; text-align: right; padding-left: 14px; border-left: 1px dashed var(--border-2); align-self: stretch; display: flex; align-items: center; }
+.stub-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px dashed var(--border); }
+.stub-actions .btn { padding: 6px 12px; font-size: 12.5px; }
+.stub.status-simulada .stub-price { color: var(--text-2); }
 
-/* Preferencias */
-.ac-prefs { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-.ac-prefs div { background: var(--bg-1); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 2px; }
-.ac-prefs small { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+/* ── Preferencias ──────────────────────────────────────────────────────── */
+.ac-prefs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.ac-prefs div { background: var(--bg-1); border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.ac-prefs small { color: var(--agent); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; font-family: var(--font-mono); }
 .ac-prefs span { font-size: 14px; }
 
-@media (max-width: 600px) {
-  .ac-res { flex-wrap: wrap; }
-  .ac-res-actions { flex-direction: row; width: 100%; }
+/* ── Recomendaciones ───────────────────────────────────────────────────── */
+.ac-rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.rec {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px; padding: 14px;
+  display: flex; flex-direction: column; gap: 9px;
+  transition: transform .3s var(--ease), border-color .25s;
 }
+.rec:hover { transform: translateY(-2px); border-color: var(--tone); }
+.rec-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.rec-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.rec-price { color: var(--sun); font-weight: 600; letter-spacing: .05em; }
+.rec-price span { color: var(--text-3); opacity: .5; }
+.rec-dish { font-size: 13px; color: var(--sun); display: flex; align-items: center; gap: 6px; }
+.rec-desc { font-size: 13px; color: var(--text-2); }
+.rec-reason { font-size: 12.5px; background: var(--agent-dim); border-radius: 9px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.rec-reason b { font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--agent); }
+.rec-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.rec-foot { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); margin-top: auto; }
 
-/* Recomendaciones */
-.ac-rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
-.ac-rec { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-.ac-rec-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-.ac-rec-name { font-weight: 700; font-size: 15px; }
-.ac-rec-price { color: var(--amber); font-weight: 700; letter-spacing: 1px; }
-.ac-rec-dish { font-size: 13px; color: var(--cyan-light); }
-.ac-rec-desc { font-size: 13px; color: var(--text-2); }
-.ac-rec-reason { font-size: 12.5px; background: rgba(139,92,246,.1); border-left: 3px solid var(--violet); border-radius: 6px; padding: 7px 9px; color: var(--text); }
-.ac-rec-reason b { color: #c4b5fd; }
-.ac-rec-meta { display: flex; gap: 6px; flex-wrap: wrap; }
-.ac-rec-foot { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); margin-top: auto; }
-.ac-recs.kind-gastronomy .ac-rec { border-top: 3px solid var(--amber); }
+@media (max-width: 600px) {
+  .pass { grid-template-columns: 1fr; }
+  .pass-stub { width: auto; border-left: 0; border-top: 2px dashed var(--border-2); flex-direction: row; align-items: center; justify-content: space-between; padding: 10px 16px; }
+  .pass-stub::before, .pass-stub::after { display: none; }
+  .stub { grid-template-columns: auto 1fr; }
+  .stub-price { grid-column: 2; border-left: 0; padding-left: 0; justify-content: flex-start; }
+}

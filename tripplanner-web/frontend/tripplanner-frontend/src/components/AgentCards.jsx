@@ -1,45 +1,71 @@
 // Agent-Driven UI: el agente devuelve datos estructurados y aquí se transforman
-// en componentes visuales (tarjetas, agenda, listados con estado).
+// en componentes visuales. Cada tipo de dato usa el color de su dominio:
+// vuelos = cielo, clima = sol, viaje/itinerario = mar, reservas = coral, recomendaciones = lavanda.
 import { Link } from 'react-router-dom'
 import { money, fmtDate, nights, safeHref, RES_TYPE, RES_STATUS, TRIP_STATUS, detailsText } from '../lib/format.js'
+import { useEnter } from '../lib/motion.js'
+import { cityCode } from './RouteMap.jsx'
+import Icon from './Icon.jsx'
 import './AgentCards.css'
 
-// ── Vuelos: tarjetas comparativas ────────────────────────────────────────────
+function BlockHead({ tone, icon, title, sub, children }) {
+  return (
+    <div className="ac-head">
+      <span className={`ac-title tone-${tone}`}><span className="ac-title-icon"><Icon name={icon} size={16} /></span>{title}</span>
+      {sub && <span className="ac-sub">{sub}</span>}
+      {children}
+    </div>
+  )
+}
+
+// ── Vuelos: pases de abordar comparativos ───────────────────────────────────
+const toMin = d => { const m = String(d || '').match(/(\d+)\s*h(?:\s*(\d+))?/); return m ? +m[1] * 60 + +(m[2] || 0) : Infinity }
+
 export function FlightCards({ data }) {
   const flights = (data?.flights || []).filter(f => f && f.airline)
   if (!flights.length) return null
   const prices = flights.map(f => Number(f.price)).filter(Number.isFinite)
   const minPrice = prices.length ? Math.min(...prices) : null
-  const toMin = d => { const m = String(d || '').match(/(\d+)\s*h(?:\s*(\d+))?/); return m ? +m[1] * 60 + +(m[2] || 0) : Infinity }
   const fastest = flights.reduce((best, f) => (toMin(f.duration) < toMin(best?.duration) ? f : best), null)
+  const from = cityCode(data.origin || '')
+  const to = cityCode(data.destination || '')
 
   return (
-    <div className="ac-block">
-      <div className="ac-head">
-        <span className="ac-title">✈️ Vuelos {data.origin && `${data.origin} → ${data.destination}`}</span>
-        <span className="ac-sub">{data.date && fmtDate(data.date)}{data.passengers ? ` · ${data.passengers} pasajeros` : ''}</span>
-      </div>
+    <div className="ac-block tone-sky">
+      <BlockHead tone="sky" icon="plane" title={`Vuelos ${from} → ${to}`}
+        sub={[data.date && fmtDate(data.date), data.passengers && `${data.passengers} pasajeros`, `${flights.length} opción${flights.length > 1 ? 'es' : ''}`].filter(Boolean).join(' · ')} />
       <div className="ac-flights">
         {flights.map((f, i) => {
           const href = safeHref(f.bookingUrl)
-          const cheapest = minPrice !== null && Number(f.price) === minPrice
+          const cheapest = minPrice !== null && Number(f.price) === minPrice && flights.length > 1
+          const isFastest = fastest === f && toMin(f.duration) !== Infinity && flights.length > 1
           return (
-            <div key={i} className={`ac-flight ${cheapest ? 'best' : ''}`}>
-              <div className="ac-flight-tags">
-                {cheapest && <span className="tag tag-green">💰 Más barato</span>}
-                {fastest === f && toMin(f.duration) !== Infinity && <span className="tag tag-cyan">⚡ Más rápido</span>}
+            <article key={i} className={`pass ${cheapest ? 'best' : ''}`} data-enter>
+              <div className="pass-main">
+                <div className="pass-top">
+                  <span className="pass-airline">{f.airline}</span>
+                  <span className="pass-number mono">{f.flightNumber || '—'}</span>
+                </div>
+                <div className="pass-route">
+                  <div><b className="mono">{f.departureTime || '--:--'}</b><span className="mono">{from}</span></div>
+                  <div className="pass-line">
+                    <small>{f.duration || ''}</small>
+                    <i><Icon name="plane" size={14} /></i>
+                    <small>{f.stops === 0 ? 'Directo' : f.stops ? `${f.stops} escala${f.stops > 1 ? 's' : ''}` : ''}</small>
+                  </div>
+                  <div className="right"><b className="mono">{f.arrivalTime || '--:--'}</b><span className="mono">{to}</span></div>
+                </div>
+                <div className="pass-tags">
+                  {cheapest && <span className="tag tag-green">Más barato</span>}
+                  {isFastest && <span className="tag tag-cyan">Más rápido</span>}
+                </div>
               </div>
-              <div className="ac-airline">{f.airline}{f.flightNumber && <span> · {f.flightNumber}</span>}</div>
-              <div className="ac-times">
-                <div><b>{f.departureTime || '—'}</b><small>{data.origin || 'Salida'}</small></div>
-                <div className="ac-line"><span>{f.duration || ''}</span><i /><span>{f.stops === 0 ? 'Directo' : f.stops ? `${f.stops} escala(s)` : ''}</span></div>
-                <div><b>{f.arrivalTime || '—'}</b><small>{data.destination || 'Llegada'}</small></div>
+              <div className="pass-stub">
+                <small>Total</small>
+                <span className="pass-price mono">{f.price != null ? money(f.price, f.currency || 'USD') : 'N/D'}</span>
+                {href && <a className="pass-link" href={href} target="_blank" rel="noopener noreferrer">Ver oferta ↗</a>}
               </div>
-              <div className="ac-flight-foot">
-                <span className="ac-price">{f.price != null ? money(f.price, f.currency || 'USD') : 'Precio no disponible'}</span>
-                {href && <a className="btn btn-ghost ac-btn" href={href} target="_blank" rel="noopener noreferrer">Ver oferta ↗</a>}
-              </div>
-            </div>
+            </article>
           )
         })}
       </div>
@@ -47,7 +73,7 @@ export function FlightCards({ data }) {
   )
 }
 
-// ── Clima: tarjetas por día ──────────────────────────────────────────────────
+// ── Clima: tarjetas por día con rango de temperatura ────────────────────────
 function weatherIcon(code, rain) {
   if (code == null) return rain >= 60 ? '🌧️' : '⛅'
   if (code === 0) return '☀️'
@@ -62,52 +88,60 @@ function weatherIcon(code, rain) {
 export function WeatherCards({ data }) {
   const days = data?.days || []
   if (!days.length) return null
+  const lo = Math.min(...days.map(d => d.tempMin ?? d.tempMax)) - 1
+  const hi = Math.max(...days.map(d => d.tempMax ?? d.tempMin)) + 1
+  const pct = v => `${((v - lo) / (hi - lo || 1)) * 100}%`
   return (
-    <div className="ac-block">
-      <div className="ac-head">
-        <span className="ac-title">🌤️ Clima en {data.city}{data.country ? `, ${data.country}` : ''}</span>
-        <span className={`tag ${data.source === 'forecast' ? 'tag-cyan' : 'tag-amber'}`}>
+    <div className="ac-block tone-sun">
+      <BlockHead tone="sun" icon="weather" title={`Clima en ${data.city}`} sub={data.country}>
+        <span className={`tag ${data.source === 'forecast' ? 'tag-amber' : 'tag-slate'}`}>
           {data.source === 'forecast' ? 'Pronóstico' : 'Estimación histórica'}
         </span>
-      </div>
+      </BlockHead>
       <div className="ac-weather">
         {days.map(d => (
-          <div key={d.date} className="ac-day">
-            <div className="ac-day-date">{fmtDate(d.date)}</div>
-            <div className="ac-day-icon">{weatherIcon(d.weatherCode, d.precipitationProbability)}</div>
-            <div className="ac-day-temp"><b>{Math.round(d.tempMax)}°</b> / {Math.round(d.tempMin)}°</div>
-            <div className="ac-day-cond">{d.condition}</div>
-            <div className="ac-day-meta">
-              {d.precipitationProbability != null && <span>💧 {d.precipitationProbability}%</span>}
-              {d.windKph != null && <span>💨 {Math.round(d.windKph)} km/h</span>}
+          <div key={d.date} className="wx-day" data-enter>
+            <div className="wx-date">{fmtDate(d.date)}</div>
+            <div className="wx-icon">{weatherIcon(d.weatherCode, d.precipitationProbability)}</div>
+            <div className="wx-cond">{d.condition}</div>
+            <div className="wx-temps mono"><b>{Math.round(d.tempMax)}°</b><span>{Math.round(d.tempMin)}°</span></div>
+            <div className="wx-range" aria-hidden="true">
+              <i style={{ left: pct(d.tempMin), right: `calc(100% - ${pct(d.tempMax)})` }} />
+            </div>
+            <div className="wx-meta mono">
+              {d.precipitationProbability != null && <span className="rain">💧 {d.precipitationProbability}%</span>}
+              {d.windKph != null && <span>💨 {Math.round(d.windKph)}</span>}
             </div>
           </div>
         ))}
       </div>
-      {data.provider && <div className="ac-foot">Fuente: {data.provider} (vía MCP de clima)</div>}
+      {data.provider && <div className="ac-foot">Fuente: {data.provider} · consultado por el Weather Agent vía MCP</div>}
     </div>
   )
 }
 
-// ── Viajes: tarjetas con destino, fechas y presupuesto ───────────────────────
+// ── Viajes ──────────────────────────────────────────────────────────────────
 export function TripCard({ trip, compact = false, children }) {
   if (!trip) return null
   const st = TRIP_STATUS[trip.status] || { label: trip.status, cls: '' }
   return (
     <div className="ac-trip">
       <div className="ac-trip-top">
-        <div>
-          <div className="ac-trip-route">{trip.origin} → <b>{trip.destination}</b></div>
-          <div className="ac-trip-dates">📅 {fmtDate(trip.startDate)} – {fmtDate(trip.endDate)} · {nights(trip.startDate, trip.endDate)} noches</div>
+        <div className="ac-trip-codes mono">
+          <span>{cityCode(trip.origin)}</span>
+          <i aria-hidden="true"><Icon name="plane" size={14} /></i>
+          <span>{cityCode(trip.destination)}</span>
         </div>
         <span className={`badge ${st.cls}`}>{st.label}</span>
       </div>
+      <div className="ac-trip-route">{trip.origin} → <b>{trip.destination}</b></div>
       <div className="ac-trip-stats">
-        <span>👥 {trip.travelers} viajero{trip.travelers > 1 ? 's' : ''}</span>
-        <span>💰 {money(trip.budget, trip.currency || 'COP')}</span>
+        <span><Icon name="calendar" size={14} /> {fmtDate(trip.startDate)} – {fmtDate(trip.endDate)} · {nights(trip.startDate, trip.endDate)} noches</span>
+        <span><Icon name="users" size={14} /> {trip.travelers}</span>
+        <span className="mono ac-trip-budget"><Icon name="wallet" size={14} /> {money(trip.budget, trip.currency || 'COP')}</span>
       </div>
       {!compact && trip.preferences && typeof trip.preferences === 'string' && (
-        <div className="ac-trip-prefs">📌 {trip.preferences}</div>
+        <div className="ac-trip-prefs">{trip.preferences}</div>
       )}
       {children}
     </div>
@@ -117,82 +151,86 @@ export function TripCard({ trip, compact = false, children }) {
 export function TripsList({ trips }) {
   if (!trips?.length) return <div className="ac-empty">No tienes viajes guardados todavía.</div>
   return (
-    <div className="ac-block">
-      <div className="ac-head"><span className="ac-title">🗺️ Tus viajes</span><Link to="/trips" className="ac-link">Ver todos →</Link></div>
-      <div className="ac-trips">{trips.map(t => <TripCard key={t.tripId} trip={t} compact />)}</div>
+    <div className="ac-block tone-sea">
+      <BlockHead tone="sea" icon="map" title="Tus viajes"><Link to="/trips" className="ac-link">Ver todos →</Link></BlockHead>
+      <div className="ac-trips">{trips.map(t => <div key={t.tripId} data-enter><TripCard trip={t} compact /></div>)}</div>
     </div>
   )
 }
 
-// ── Itinerario: agenda por día ───────────────────────────────────────────────
-export function ItineraryAgenda({ days, title = '📅 Itinerario' }) {
+// ── Itinerario: ruta con paradas por día ────────────────────────────────────
+export function ItineraryAgenda({ days, title = 'Itinerario' }) {
   const list = [...(days || [])].sort((a, b) => (a.date > b.date ? 1 : -1))
   if (!list.length) return <div className="ac-empty">Este viaje aún no tiene itinerario.</div>
+  const total = list.flatMap(d => d.activities || []).reduce((s, a) => s + (Number(a.estimatedCost) || 0), 0)
   return (
-    <div className="ac-block">
-      <div className="ac-head"><span className="ac-title">{title}</span><span className="ac-sub">{list.length} día(s)</span></div>
-      <div className="ac-agenda">
+    <div className="ac-block tone-sea">
+      <BlockHead tone="sea" icon="calendar" title={title}
+        sub={`${list.length} día${list.length > 1 ? 's' : ''}${total ? ` · ~${money(total)} en actividades` : ''}`} />
+      <ol className="route">
         {list.map((d, i) => (
-          <div key={d.date} className="ac-agenda-day">
-            <div className="ac-agenda-label">
-              <span className="ac-agenda-n">Día {i + 1}</span>
-              <span>{fmtDate(d.date, { weekday: 'long', day: 'numeric', month: 'long' })}</span>
-            </div>
-            <ul className="ac-agenda-items">
-              {(d.activities || []).map((a, j) => (
-                <li key={j}>
-                  <span className="ac-time">{a.time || '•'}</span>
-                  <div>
-                    <div className="ac-act-title">{a.title}{a.category && <span className="tag">{a.category}</span>}</div>
-                    {a.description && <div className="ac-act-desc">{a.description}</div>}
-                    <div className="ac-act-meta">
-                      {a.location && <span>📍 {a.location}</span>}
-                      {a.estimatedCost != null && <span>💵 {money(a.estimatedCost)}</span>}
+          <li key={d.date} className="route-day" data-enter>
+            <div className="route-marker"><span className="mono">{String(i + 1).padStart(2, '0')}</span></div>
+            <div className="route-body">
+              <div className="route-date">{fmtDate(d.date, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+              <ul className="route-stops">
+                {(d.activities || []).map((a, j) => (
+                  <li key={j}>
+                    <span className="route-time mono">{a.time || '·'}</span>
+                    <div>
+                      <div className="route-title">{a.title}{a.category && <span className="tag">{a.category}</span>}</div>
+                      {a.description && <div className="route-desc">{a.description}</div>}
+                      <div className="route-meta">
+                        {a.location && <span>📍 {a.location}</span>}
+                        {a.estimatedCost != null && <span className="mono">{money(a.estimatedCost)}</span>}
+                      </div>
                     </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-            {d.notes && <div className="ac-agenda-notes">📝 {d.notes}</div>}
-          </div>
+                  </li>
+                ))}
+              </ul>
+              {d.notes && <div className="route-notes">{d.notes}</div>}
+            </div>
+          </li>
         ))}
-      </div>
+      </ol>
     </div>
   )
 }
 
-// ── Reservas: listado con estados ────────────────────────────────────────────
+// ── Reservas: talones con sello de estado ───────────────────────────────────
 export function StatusBadge({ status }) {
   const s = RES_STATUS[status] || { label: status, cls: '' }
   return <span className={`badge ${s.cls}`} title={s.hint}>{s.label}</span>
 }
 
+const RES_ICON = { FLIGHT: 'plane', HOTEL: 'home', ACTIVITY: 'compass' }
+
 export function ReservationList({ reservations, renderActions }) {
   if (!reservations?.length) return <div className="ac-empty">No hay reservas registradas.</div>
   return (
-    <div className="ac-block">
-      <div className="ac-head"><span className="ac-title">📋 Reservas</span><Link to="/reservations" className="ac-link">Gestionar →</Link></div>
+    <div className="ac-block tone-coral">
+      <BlockHead tone="coral" icon="ticket" title="Reservas"><Link to="/reservations" className="ac-link">Gestionar →</Link></BlockHead>
       <div className="ac-res-list">
         {reservations.map(r => {
-          const t = RES_TYPE[r.type] || { icon: '📋', label: r.type }
+          const t = RES_TYPE[r.type] || { label: r.type }
           return (
-            <div key={r.reservationId} className={`ac-res type-${r.type}`}>
-              <div className="ac-res-icon">{t.icon}</div>
-              <div className="ac-res-body">
-                <div className="ac-res-top">
-                  <span className="ac-res-title">{r.title || t.label}</span>
+            <article key={r.reservationId} className={`stub type-${r.type} status-${(r.status || '').toLowerCase()}`} data-enter>
+              <div className="stub-icon"><Icon name={RES_ICON[r.type] || 'ticket'} size={20} /></div>
+              <div className="stub-body">
+                <div className="stub-top">
+                  <span className="stub-title">{r.title || t.label}</span>
                   <StatusBadge status={r.status} />
                 </div>
-                <div className="ac-res-details">{detailsText(r.details)}</div>
-                <div className="ac-res-meta">
+                {detailsText(r.details) && <div className="stub-details">{detailsText(r.details)}</div>}
+                <div className="stub-meta">
                   <span>{t.label}</span>
-                  {r.tripName && <span>🗺️ {r.tripName}</span>}
-                  {r.date && <span>📅 {fmtDate(r.date)}</span>}
-                  <span>💰 {money(r.price, r.currency || 'COP')}</span>
+                  {r.tripName && <span>{r.tripName}</span>}
+                  {r.date && <span>{fmtDate(r.date)}</span>}
                 </div>
               </div>
-              {renderActions && <div className="ac-res-actions">{renderActions(r)}</div>}
-            </div>
+              <div className="stub-price mono">{money(r.price, r.currency || 'COP')}</div>
+              {renderActions && <div className="stub-actions">{renderActions(r)}</div>}
+            </article>
           )
         })}
       </div>
@@ -200,70 +238,72 @@ export function ReservationList({ reservations, renderActions }) {
   )
 }
 
-// ── Preferencias ─────────────────────────────────────────────────────────────
+// ── Preferencias ────────────────────────────────────────────────────────────
 const PREF_LABELS = {
-  budgetLevel: 'Presupuesto', activityTypes: 'Actividades', dietaryRestrictions: 'Restricciones alimentarias',
+  budgetLevel: 'Presupuesto', activityTypes: 'Actividades', dietaryRestrictions: 'Alimentación',
   preferredAirlines: 'Aerolíneas', seatPreference: 'Asiento', accommodationType: 'Alojamiento',
-  travelPace: 'Ritmo de viaje', homeCity: 'Ciudad de origen', currency: 'Moneda', notes: 'Notas',
+  travelPace: 'Ritmo', homeCity: 'Ciudad de origen', currency: 'Moneda', notes: 'Notas',
 }
 
 export function PreferencesCard({ prefs }) {
   const entries = Object.entries(prefs || {}).filter(([, v]) => v && (!Array.isArray(v) || v.length))
   if (!entries.length) return <div className="ac-empty">Sin preferencias guardadas.</div>
   return (
-    <div className="ac-block">
-      <div className="ac-head"><span className="ac-title">⭐ Preferencias guardadas</span></div>
+    <div className="ac-block tone-agent">
+      <BlockHead tone="agent" icon="sparkles" title="Preferencias guardadas" sub="El asistente las usa para personalizar" />
       <div className="ac-prefs">
         {entries.map(([k, v]) => (
-          <div key={k}><small>{PREF_LABELS[k] || k}</small><span>{Array.isArray(v) ? v.join(', ') : String(v)}</span></div>
+          <div key={k} data-enter><small>{PREF_LABELS[k] || k}</small><span>{Array.isArray(v) ? v.join(', ') : String(v)}</span></div>
         ))}
       </div>
     </div>
   )
 }
 
-// ── Recomendaciones personalizadas ──────────────────────────────────────────
+// ── Recomendaciones personalizadas y gastronómicas ──────────────────────────
 const REC_KIND = {
-  destinations: { icon: '🧭', label: 'Destinos recomendados' },
-  activities:   { icon: '🎯', label: 'Actividades recomendadas' },
-  experiences:  { icon: '✨', label: 'Experiencias recomendadas' },
-  gastronomy:   { icon: '🍽️', label: 'Recomendaciones gastronómicas' },
+  destinations: { icon: 'compass',  label: 'Destinos recomendados' },
+  activities:   { icon: 'sparkles', label: 'Actividades recomendadas' },
+  experiences:  { icon: 'sparkles', label: 'Experiencias recomendadas' },
+  gastronomy:   { icon: 'food',     label: 'Recomendaciones gastronómicas' },
 }
-const PRICE_LEVEL = n => (Number(n) >= 1 && Number(n) <= 4 ? '$'.repeat(Number(n)) : null)
+const PRICE_LEVEL = n => (Number(n) >= 1 && Number(n) <= 4 ? Number(n) : null)
 
 export function RecommendationCards({ data }) {
   const items = data?.items || []
   if (!items.length) return null
   const kind = REC_KIND[data.kind] || REC_KIND.experiences
+  const food = data.kind === 'gastronomy'
   return (
-    <div className={`ac-block ac-recs kind-${data.kind}`}>
-      <div className="ac-head">
-        <span className="ac-title">{kind.icon} {data.title || kind.label}</span>
-        {data.destination && <span className="ac-sub">📍 {data.destination}</span>}
-      </div>
+    <div className={`ac-block ${food ? 'tone-sun' : 'tone-agent'} kind-${data.kind}`}>
+      <BlockHead tone={food ? 'sun' : 'agent'} icon={kind.icon} title={data.title || kind.label} sub={data.destination} />
       <div className="ac-rec-grid">
         {items.map((it, i) => (
-          <div key={i} className="ac-rec">
-            <div className="ac-rec-top">
-              <span className="ac-rec-name">{it.name}</span>
-              {PRICE_LEVEL(it.priceLevel) && <span className="ac-rec-price" title="Nivel de precio">{PRICE_LEVEL(it.priceLevel)}</span>}
+          <article key={i} className="rec" data-enter>
+            <div className="rec-top">
+              <span className="rec-name">{it.name}</span>
+              {PRICE_LEVEL(it.priceLevel) && (
+                <span className="rec-price mono" aria-label={`Nivel de precio ${it.priceLevel} de 4`}>
+                  {'$'.repeat(PRICE_LEVEL(it.priceLevel))}<span>{'$'.repeat(4 - PRICE_LEVEL(it.priceLevel))}</span>
+                </span>
+              )}
             </div>
-            {it.dish && <div className="ac-rec-dish">🍴 {it.dish}</div>}
-            {it.description && <div className="ac-rec-desc">{it.description}</div>}
-            {it.reason && <div className="ac-rec-reason"><b>Para ti:</b> {it.reason}</div>}
-            <div className="ac-rec-meta">
-              {it.category && <span className="tag">{it.category}</span>}
+            {it.dish && <div className="rec-dish"><Icon name="food" size={14} /> {it.dish}</div>}
+            {it.description && <div className="rec-desc">{it.description}</div>}
+            {it.reason && <div className="rec-reason"><b>Para ti</b>{it.reason}</div>}
+            <div className="rec-tags">
               {(it.dietary || []).map(t => <span key={t} className="tag tag-green">✓ {t}</span>)}
+              {it.category && it.category !== 'gastronomía' && <span className="tag">{it.category}</span>}
               {(it.tags || [])
                 .filter(t => t !== it.category && !(it.dietary || []).some(d => d.toLowerCase() === String(t).toLowerCase()))
                 .map(t => <span key={t} className="tag">{t}</span>)}
             </div>
-            <div className="ac-rec-foot">
+            <div className="rec-foot">
               {it.location && <span>📍 {it.location}</span>}
-              {(it.bestTime || it.mealTime) && <span>🕒 {it.mealTime || it.bestTime}</span>}
-              {it.estimatedCost != null && <span>💵 ~{money(it.estimatedCost, it.currency || 'COP')}</span>}
+              {(it.mealTime || it.bestTime) && <span>🕒 {it.mealTime || it.bestTime}</span>}
+              {it.estimatedCost != null && <span className="mono">~{money(it.estimatedCost, it.currency || 'COP')}</span>}
             </div>
-          </div>
+          </article>
         ))}
       </div>
       <div className="ac-foot">Costos estimados por el asistente · verifica horarios y precios antes de ir.</div>
@@ -271,17 +311,24 @@ export function RecommendationCards({ data }) {
   )
 }
 
-// ── Selector: evento "ui" del agente → componente ───────────────────────────
+// ── Selector: evento "ui" del agente → componente (con entrada animada) ─────
 export function AgentUI({ component, data }) {
+  const ref = useEnter({ children: '[data-enter]', from: { y: 16, autoAlpha: 0, scale: 0.97 } })
+  let content
   switch (component) {
-    case 'flights':      return <FlightCards data={data} />
-    case 'weather':      return <WeatherCards data={data} />
-    case 'trip':         return <div className="ac-block"><div className="ac-head"><span className="ac-title">🗺️ Viaje</span><Link to="/trips" className="ac-link">Mis viajes →</Link></div><TripCard trip={data} /></div>
-    case 'trips':        return <TripsList trips={data} />
-    case 'itinerary':    return <ItineraryAgenda days={data?.days} />
-    case 'reservations': return <ReservationList reservations={data} />
-    case 'preferences':  return <PreferencesCard prefs={data} />
-    case 'recommendations': return <RecommendationCards data={data} />
-    default:             return null
+    case 'flights':         content = <FlightCards data={data} />; break
+    case 'weather':         content = <WeatherCards data={data} />; break
+    case 'trip':            content = (
+      <div className="ac-block tone-sea">
+        <BlockHead tone="sea" icon="map" title="Viaje guardado"><Link to={`/trips/${data?.tripId || ''}`} className="ac-link">Abrir →</Link></BlockHead>
+        <div data-enter><TripCard trip={data} /></div>
+      </div>); break
+    case 'trips':           content = <TripsList trips={data} />; break
+    case 'itinerary':       content = <ItineraryAgenda days={data?.days} />; break
+    case 'reservations':    content = <ReservationList reservations={data} />; break
+    case 'preferences':     content = <PreferencesCard prefs={data} />; break
+    case 'recommendations': content = <RecommendationCards data={data} />; break
+    default:                content = null
   }
+  return content ? <div ref={ref} className="agent-ui">{content}</div> : null
 }
